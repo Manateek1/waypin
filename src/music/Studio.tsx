@@ -1,180 +1,241 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, AudioLines, ChevronDown, Guitar, Music2, Piano, Play, Repeat2, RotateCcw, Sparkles, Square, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, ArrowRight, AudioLines, Download, Headphones, Music2, Play, Repeat2, RotateCcw, Sparkles, Square, Volume2, VolumeX } from "lucide-react";
 import { appPath } from "../paths";
 import { arrange, canArrange } from "./arrange";
-import { ToyBand, type Mix } from "./audio";
-import { genres, loadScore, noteLabel, preset, STEPS, toys, trackIds, type Genre, type Score, type TrackId } from "./score";
+import { renderSong, ToyBand, type Position } from "./audio";
+import { defaultMix, durationBars, durationSecs, genres, loadSong, noteLabel, preset, STEPS_PER_BAR, timeLabel, toys, trackIds, type Genre, type Mix, type Song, type TrackId } from "./score";
 import "./studio.css";
+import "./songs.css";
 
-const prompts = ["Make it sound like a tiny orchestra", "Give the fox a rock solo", "Make it slower and softer"];
-const palette = { Classical: "classical", Rock: "rock", Orchestra: "orchestra" } as const;
-const trackIcons = { keys: Piano, guitar: Guitar, bass: AudioLines, drums: Music2 };
-const defaultMix = () => Object.fromEntries(toys.map((toy) => [toy.id, { volume: toy.volume, muted: false }])) as Mix;
+const promptIdeas = ["Write an upbeat arcade theme", "Give Rosie the bridge", "Slow it down and soften the drums"];
 
 export function Studio() {
-  const [score, setScore] = useState(loadScore);
+  const [song, setSong] = useState(loadSong);
   const [mix, setMix] = useState(defaultMix);
-  const [master, setMaster] = useState(79);
-  const [loop, setLoop] = useState(true);
-  const [playing, setPlaying] = useState(false);
+  const [master, setMaster] = useState(82);
+  const [loop, setLoop] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [step, setStep] = useState(-1);
+  const [playing, setPlaying] = useState(false);
+  const [position, setPosition] = useState<Position | null>(null);
+  const [sectionIndex, setSectionIndex] = useState(0);
+  const [page, setPage] = useState(0);
   const [prompt, setPrompt] = useState("");
+  const [mode, setMode] = useState<"edit" | "create">("create");
   const [pending, setPending] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState("");
   const [source, setSource] = useState("");
-  const [previous, setPrevious] = useState<{ score: Score; mix: Mix } | null>(null);
+  const [previous, setPrevious] = useState<{ song: Song; mix: Mix } | null>(null);
   const [focused, setFocused] = useState<{ id: TrackId; step: number } | null>(null);
-  const audio = useRef<ToyBand | null>(null);
-  const playerState = useRef({ score, mix, master, loop });
-  playerState.current = { score, mix, master, loop };
+  const player = useRef<ToyBand | null>(null);
+  const current = useRef({ song, mix, master, loop });
+  current.current = { song, mix, master, loop };
+  const section = song.sections[sectionIndex] ?? song.sections[0];
+  const gridStart = page * 2 * STEPS_PER_BAR;
+  const busy = !!pending;
+  const time = position ? (song.sections.slice(0, position.section).reduce((sum, part) => sum + part.bars * STEPS_PER_BAR, 0) + position.step) * 30 / song.bpm : 0;
 
-  useEffect(() => {
-    try { localStorage.setItem("waypin-toybox-score", JSON.stringify(score)); } catch { /* Storage is optional. */ }
-  }, [score]);
-  useEffect(() => { audio.current?.updateMix(mix, master); }, [mix, master]);
-  useEffect(() => () => { void audio.current?.close().catch(() => undefined); }, []);
+  useEffect(() => { try { localStorage.setItem("toybox-full-song", JSON.stringify(song)); } catch { /* Storage is optional. */ } }, [song]);
+  useEffect(() => player.current?.updateMix(mix, master), [mix, master]);
+  useEffect(() => () => { void player.current?.close().catch(() => undefined); }, []);
 
-  async function transport() {
-    if (playing) {
-      audio.current?.stop();
-      setPlaying(false);
-      setStep(-1);
-      return;
-    }
+  function stop() {
+    player.current?.stop();
+    setPlaying(false);
+    setPosition(null);
+  }
+
+  async function play(first = 0) {
+    if (playing) { stop(); return; }
     setStarting(true);
     try {
-      audio.current ??= new ToyBand();
-      await audio.current.play(() => playerState.current, (next) => {
-        setStep(next);
-        if (next === -1) setPlaying(false);
-      });
+      player.current ??= new ToyBand();
+      await player.current.play(() => current.current, (next) => {
+        setPosition(next);
+        if (!next) setPlaying(false);
+      }, first);
       setPlaying(true);
     } catch {
-      setMessage("Audio could not start. Check that this tab can play sound and try again.");
+      setMessage("Audio could not start. Check whether this tab can play sound.");
     } finally {
       setStarting(false);
     }
   }
 
-  function applyScore(next: Score, nextSource: string) {
-    setPrevious({ score, mix });
-    setSource(nextSource);
-    setScore(next);
+  function pickSection(index: number) {
+    setSectionIndex(index);
+    setPage(0);
+    setFocused(null);
   }
 
-  function choosePreset(genre: Genre) {
-    applyScore(preset(genre), "Preset");
-    setMessage("");
+  function apply(next: Song, origin: string) {
+    setPrevious({ song, mix });
+    stop();
+    setSong(next);
+    setSource(origin);
+    pickSection(0);
   }
 
-  async function edit(event: FormEvent<HTMLFormElement>) {
+  async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!prompt.trim() || pending || !canArrange) return;
+    if (!prompt.trim() || busy || !canArrange) return;
     setPending("Arranging…");
     setMessage("");
     try {
-      const volumes = Object.fromEntries(trackIds.map((id) => [id, mix[id].volume])) as Record<TrackId, number>;
-      const result = await arrange(score, volumes, prompt.trim(), (percent) => setPending(percent < 100 ? `Downloading Nano · ${percent}%` : "Arranging on device…"));
-      applyScore(result.score, result.source);
-      setMix((current) => Object.fromEntries(trackIds.map((id) => [
-        id, { ...current[id], volume: result.volumes[id] === volumes[id] ? current[id].volume : result.volumes[id] },
+      const result = await arrange(song, mix, prompt.trim(), mode, (percent) => {
+        setPending(percent < 100 ? `Downloading Nano · ${percent}%` : "Arranging on device…");
+      });
+      apply(result.song, result.source);
+      setMix((latest) => Object.fromEntries(trackIds.map((id) => [
+        id, { ...latest[id], volume: result.volumes[id] === mix[id].volume ? latest[id].volume : result.volumes[id] },
       ])) as Mix);
       setPrompt("");
-      setMessage(`Arrangement updated to ${result.score.title}.`);
+      setMode("edit");
+      setMessage(`${result.song.title} is ready to play · ${durationBars(result.song)} bars.`);
     } catch (error) {
-      setMessage(error instanceof Error ? `Couldn’t apply that edit. ${error.message}` : "Couldn’t apply that edit. Your loop is still playable.");
+      setMessage(error instanceof Error ? `Couldn’t apply that request. ${error.message}` : "Couldn’t apply that request. Your song is still playable.");
     } finally {
       setPending("");
     }
   }
 
-  function updateNote(id: TrackId, index: number, note: number) {
-    const notes = score.tracks[id].map((value, stepIndex) => stepIndex === index ? note : value);
-    setScore({ ...score, tracks: { ...score.tracks, [id]: notes } });
+  function setNote(id: TrackId, step: number, pitch: number) {
+    setSong((latest) => ({
+      ...latest, sections: latest.sections.map((part, index) => index === sectionIndex ? {
+        ...part, tracks: { ...part.tracks, [id]: part.tracks[id].map((note, i) => i === step ? pitch : note) },
+      } : part),
+    }));
   }
 
-  const focusedPitch = focused ? score.tracks[focused.id][focused.step] : 0;
-  const pitchOptions = focused?.id === "drums" ? [36, 38, 42] : Array.from({ length: 69 }, (_, n) => n + 28);
+  async function downloadSong() {
+    if (exporting) return;
+    setExporting(true);
+    setMessage("");
+    try {
+      const file = await renderSong(song, mix, master);
+      const url = URL.createObjectURL(file);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = (song.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "toybox-song") + ".wav";
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setMessage("Your full song is ready as a WAV file.");
+    } catch {
+      setMessage("The browser couldn’t render this WAV. Try again with fewer apps open.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const pitchOptions = focused?.id === "drums" ? [36, 38, 42] : focused?.id === "shaker" ? [70] : Array.from({ length: 69 }, (_, index) => 28 + index);
 
   return <div className="toy-studio">
     <a className="skip" href="#toy-workspace">Skip to studio</a>
     <header className="toy-header">
-      <a className="toy-logo" href={appPath("studio/")}><span><AudioLines size={22} /></span> Toybox</a>
-      <a className="toy-archive" href={appPath("audit/")}>Waypin audit <ArrowRight size={15} /></a>
+      <a className="toy-logo" href={appPath()}><span><AudioLines size={22} /></span> Toybox</a>
+      <a className="toy-archive" href={appPath()}><ArrowLeft size={15} /> Home</a>
     </header>
-    <main className="toy-main" id="toy-workspace">
-      <div className="toy-intro">
-        <div><h1>Make a little <em>noise.</em></h1><p>Give your toy band an idea, then shape the loop together.</p></div>
-        <div className="toy-genres" aria-label="Starting arrangement">
-          {genres.map((genre) => <button key={genre} type="button" disabled={!!pending} className={`toy-genre ${palette[genre]}`} aria-pressed={score.genre === genre} onClick={() => choosePreset(genre)}>{genre}</button>)}
-        </div>
+    <main className="toy-main song-main" id="toy-workspace">
+      <div className="song-top">
+        <div><h1>Song studio</h1><p>Arrange, play, and export with your toy band.</p></div>
+        <button className="toy-button toy-primary" type="button" disabled={exporting || busy} onClick={() => void downloadSong()}><Download size={17} />{exporting ? "Rendering WAV…" : "Download WAV"}</button>
       </div>
-      <form className="toy-prompt" onSubmit={edit}>
-        <label htmlFor="arrange-prompt"><Sparkles size={18} /> Tell the band what to change</label>
-        <div className="toy-prompt-row">
-          <input id="arrange-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={220} placeholder={prompts[0]} disabled={!!pending} />
-          <button className="toy-button toy-primary" type="submit" disabled={!prompt.trim() || !!pending || !canArrange}>{pending || "Arrange"} <ArrowRight size={17} /></button>
+
+      <form className="toy-prompt" onSubmit={generate}>
+        <div className="song-prompt-header">
+          <label htmlFor="arrange-prompt"><Sparkles size={17} /> What should the band play?</label>
+          <div className="song-modes" aria-label="Prompt mode">
+            <button type="button" aria-pressed={mode === "create"} disabled={busy} onClick={() => setMode("create")}>New song</button>
+            <button type="button" aria-pressed={mode === "edit"} disabled={busy} onClick={() => setMode("edit")}>Edit song</button>
+          </div>
         </div>
-        <div className="toy-suggestions">{prompts.map((value) => <button key={value} type="button" disabled={!!pending} onClick={() => setPrompt(value)}>{value}</button>)}</div>
-        {!canArrange && <p className="toy-feedback">Live prompts require cloud setup or supported desktop Chrome. You can play and edit every preset here.</p>}
+        <div className="toy-prompt-row">
+          <input id="arrange-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={280} placeholder={mode === "create" ? "A mysterious jazz tune for a detective game" : "Make the bridge quieter and give violin the lead"} disabled={busy} />
+          <button className="toy-button toy-primary" type="submit" disabled={!prompt.trim() || busy || !canArrange}>{pending || (mode === "create" ? "Write song" : "Apply edit")} <ArrowRight size={17} /></button>
+        </div>
+        <div className="toy-suggestions">{promptIdeas.map((idea, i) => <button key={idea} type="button" disabled={busy} onClick={() => { setPrompt(idea); setMode(i ? "edit" : "create"); }}>{idea}</button>)}</div>
+        {!canArrange && <p className="toy-feedback">Live prompts require Firebase AI or supported desktop Chrome. Presets and manual editing are available here.</p>}
         {message && <p className="toy-feedback" role="status">{message}</p>}
       </form>
-      <div className="toy-grid">
-        <section className="toy-panel toy-score" aria-label="Arrangement">
-          <header className="toy-panel-heading"><div><p>Two-bar loop</p><h2>{score.title}</h2></div>
-            {source && <span className="toy-source">{source}</span>}
-          </header>
-          <div className="toy-transport">
-            <button className="toy-button toy-play" type="button" onClick={() => void transport()} disabled={starting}>{playing ? <Square size={17} fill="currentColor" /> : <Play size={18} fill="currentColor" />}{playing ? "Stop" : "Play"}</button>
-            <button className="toy-button toy-outline" type="button" aria-pressed={loop} onClick={() => setLoop(!loop)}><Repeat2 size={17} /> Loop</button>
-            <label className="toy-tempo">Tempo <input type="range" min={60} max={180} value={score.bpm} disabled={!!pending} onChange={(event) => setScore({ ...score, bpm: Number(event.target.value) })} /><output>{score.bpm} BPM</output></label>
-            <button className="toy-icon" type="button" aria-label="Undo last arrangement change" disabled={!previous || !!pending} onClick={() => { if (previous) { setScore(previous.score); setMix(previous.mix); setPrevious(null); setSource(""); setMessage("Previous arrangement restored."); } }}><RotateCcw size={18} /></button>
+
+      <div className="song-genre-row"><strong>Start from a genre</strong><div className="toy-genres" aria-label="Genre presets">
+        {genres.map((genre: Genre) => <button key={genre} disabled={busy} type="button" className="toy-genre" aria-pressed={song.genre === genre} onClick={() => { apply(preset(genre), "Preset"); setMessage(""); }}>{genre}</button>)}
+      </div></div>
+
+      <section className="song-timeline toy-panel" aria-label="Song timeline">
+        <div className="toy-panel-heading"><div>
+          <p>{song.genre} · {song.key} · {durationBars(song)} bars</p>
+          <h2>{song.title}</h2>
+        </div>{source && <span className="toy-source">{source}</span>}</div>
+        <div className="toy-transport song-transport">
+          <button className="toy-button toy-play" type="button" onClick={() => void play()} disabled={starting}>{playing ? <Square size={16} fill="currentColor" /> : <Play size={17} fill="currentColor" />}{playing ? "Stop" : "Play song"}</button>
+          <div className="song-time"><span>{timeLabel(time)} / {timeLabel(durationSecs(song))}</span><progress aria-label="Song playback progress" value={time} max={durationSecs(song)} /></div>
+          <button className="toy-button toy-outline" type="button" aria-pressed={loop} onClick={() => setLoop(!loop)}><Repeat2 size={17} /> Loop</button>
+          <label className="toy-tempo">Tempo <input type="range" min={60} max={180} value={song.bpm} disabled={busy} onChange={(event) => setSong({ ...song, bpm: Number(event.target.value) })} /><output>{song.bpm} BPM</output></label>
+          <button className="toy-icon" type="button" aria-label="Undo last arrangement change" disabled={!previous || busy} onClick={() => {
+            if (!previous) return;
+            stop(); setSong(previous.song); setMix(previous.mix); setPrevious(null); setSource(""); pickSection(0); setMessage("Previous arrangement restored.");
+          }}><RotateCcw size={17} /></button>
+        </div>
+        <div className="song-sections">
+          {song.sections.map((part, index) => <button type="button" key={index} style={{ flexGrow: part.bars }} className={`song-part part-${part.name.toLowerCase()}${position?.section === index ? " is-playing" : ""}`} aria-pressed={index === sectionIndex} onClick={() => pickSection(index)}>
+            <strong>{part.name}</strong><span>{part.bars} bars · {toys.find((toy) => toy.id === part.lead)?.instrument}</span>
+          </button>)}
+        </div>
+      </section>
+
+      <div className="toy-grid song-grid">
+        <section className="toy-panel toy-score" aria-label="Section notes">
+          <div className="toy-panel-heading"><div><p>Section notes</p><h2>{section.name}</h2></div>
+            <button className="toy-button toy-outline" type="button" disabled={playing || starting} onClick={() => void play(sectionIndex)}><Play size={15} /> Play from here</button>
+          </div>
+          <div className="song-page-controls">
+            <button className="toy-icon" type="button" aria-label="Previous two bars" disabled={page === 0} onClick={() => { setPage(page - 1); setFocused(null); }}><ArrowLeft size={15} /></button>
+            <strong>Bars {page * 2 + 1}–{page * 2 + 2} of {section.bars}</strong>
+            <button className="toy-icon" type="button" aria-label="Next two bars" disabled={page * 2 + 2 >= section.bars} onClick={() => { setPage(page + 1); setFocused(null); }}><ArrowRight size={15} /></button>
           </div>
           <div className="toy-sequence-scroll">
             <div className="toy-sequence">
-              <div className="toy-count-row"><span>Track</span>{Array.from({ length: STEPS }, (_, i) => <span key={i} className={step === i ? "now" : undefined}>{i % 2 === 0 ? i / 2 + 1 : "·"}</span>)}</div>
-              {toys.map((toy) => { const Icon = trackIcons[toy.id]; return <div className={`toy-note-row ${toy.colour}`} key={toy.id}>
-                <span className="toy-track-label"><Icon size={16} /> {toy.instrument}</span>
-                {score.tracks[toy.id].map((note, i) => <button
-                  type="button" key={i} disabled={!!pending} aria-pressed={Boolean(note)}
-                  aria-label={`${toy.name}, step ${i + 1}, ${noteLabel(toy.id, note)}`}
-                  className={`toy-note${note ? " has-note" : ""}${step === i ? " active-step" : ""}${focused?.id === toy.id && focused.step === i ? " selected-note" : ""}`}
-                  onClick={() => {
-                    if (!note || (focused?.id === toy.id && focused.step === i)) updateNote(toy.id, i, note ? 0 : toy.pitch);
-                    setFocused({ id: toy.id, step: i });
-                  }}
-                >{note ? noteLabel(toy.id, note) : ""}</button>)}
-              </div>; })}
+              <div className="toy-count-row"><span>Track</span>{Array.from({ length: 16 }, (_, i) => <span key={i}>{i % 2 === 0 ? i / 2 + 1 : "·"}</span>)}</div>
+              {toys.map((toy) => <div className={`toy-note-row ${toy.colour}`} key={toy.id}>
+                <span className="toy-track-label"><Music2 size={14} />{toy.instrument}</span>
+                {section.tracks[toy.id].slice(gridStart, gridStart + 16).map((note, i) => {
+                  const step = gridStart + i;
+                  const selected = focused?.id === toy.id && focused.step === step;
+                  return <button type="button" key={i} disabled={busy} aria-pressed={Boolean(note)} aria-label={`${toy.name}, step ${step + 1}, ${noteLabel(toy.id, note)}`}
+                    className={`toy-note${note ? " has-note" : ""}${position?.section === sectionIndex && position.step === step ? " active-step" : ""}${selected ? " selected-note" : ""}`}
+                    onClick={() => { if (!note || selected) setNote(toy.id, step, note ? 0 : toy.pitch); setFocused({ id: toy.id, step }); }}
+                  >{note ? noteLabel(toy.id, note) : ""}</button>;
+                })}
+              </div>)}
             </div>
           </div>
           <div className="toy-note-editor">
-            {focused ? <>
-              <label htmlFor="toy-pitch">{toys.find((toy) => toy.id === focused.id)?.name} · step {focused.step + 1}</label>
-              <div className="toy-select"><select id="toy-pitch" disabled={!!pending} value={focusedPitch} onChange={(event) => updateNote(focused.id, focused.step, Number(event.target.value))}>
+            {focused ? <><label htmlFor="toy-pitch">{toys.find((toy) => toy.id === focused.id)?.name} · step {focused.step + 1}</label>
+              <select id="toy-pitch" disabled={busy} value={section.tracks[focused.id][focused.step]} onChange={(event) => setNote(focused.id, focused.step, Number(event.target.value))}>
                 <option value={0}>Rest</option>
-                {pitchOptions.map((note) => <option key={note} value={note}>{noteLabel(focused.id, note)}</option>)}
-              </select><ChevronDown size={13} /></div>
-            </> : <span>Pick a step to choose a note or rest.</span>}
+                {pitchOptions.map((pitch) => <option key={pitch} value={pitch}>{noteLabel(focused.id, pitch)}</option>)}
+              </select>
+            </> : <span>Select a step to add a note or change its pitch.</span>}
           </div>
         </section>
         <section className="toy-panel toy-mixer" aria-label="Toy band mixer">
-          <header className="toy-panel-heading"><div><p>Instrument mixer</p><h2>The toy band</h2></div><AudioLines size={22} /></header>
-          {toys.map((toy) => {
+          <div className="toy-panel-heading"><div><p>Ten playable instruments</p><h2>The toy band</h2></div><Headphones size={21} /></div>
+          <div className="song-mix-list">{toys.map((toy) => {
             const settings = mix[toy.id];
-            return <div className={`toy-strip ${toy.colour}${playing && step >= 0 && score.tracks[toy.id][step] && !settings.muted ? " playing" : ""}`} key={toy.id}>
+            const active = position && song.sections[position.section]?.tracks[toy.id][position.step] && !settings.muted;
+            return <div className={`toy-strip ${toy.colour}${active ? " playing" : ""}`} key={toy.id}>
               <button type="button" className="toy-portrait" aria-label={`Preview ${toy.name}'s instrument`} onClick={() => {
-                audio.current ??= new ToyBand();
-                void audio.current.preview(toy.id, toy.pitch, settings.volume, master, score.genre)
-                  .catch(() => setMessage("Your browser could not play the instrument."));
-              }}><img src={appPath(`toys/${toy.id}.jpg`)} alt="" width={76} height={76} /></button>
+                player.current ??= new ToyBand();
+                void player.current.preview(toy.id, toy.pitch, settings.volume, master, song.genre).catch(() => setMessage("Your browser could not play this instrument."));
+              }}><img src={appPath(`toys/${toy.id}.jpg`)} alt="" width={62} height={62} /></button>
               <div className="toy-strip-details"><strong>{toy.name}</strong><span>{toy.instrument}</span>
                 <label className="toy-volume"><input aria-label={`${toy.name} volume`} type="range" min={0} max={100} value={settings.volume} onChange={(event) => setMix({ ...mix, [toy.id]: { ...settings, volume: Number(event.target.value) } })}/><output>{settings.volume}%</output></label>
               </div>
-              <button className="toy-icon" type="button" aria-label={`${settings.muted ? "Unmute" : "Mute"} ${toy.name}`} onClick={() => setMix({ ...mix, [toy.id]: { ...settings, muted: !settings.muted } })}>{settings.muted ? <VolumeX size={19} /> : <Volume2 size={19} />}</button>
+              <button className="toy-icon" type="button" aria-label={`${settings.muted ? "Unmute" : "Mute"} ${toy.name}`} onClick={() => setMix({ ...mix, [toy.id]: { ...settings, muted: !settings.muted } })}>{settings.muted ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
             </div>;
-          })}
-          <label className="toy-master"><Volume2 size={17} /> Master <input type="range" min={0} max={100} value={master} onChange={(event) => setMaster(Number(event.target.value))} /><output>{master}%</output></label>
+          })}</div>
+          <label className="toy-master"><Volume2 size={16} /> Master <input type="range" min={0} max={100} value={master} onChange={(event) => setMaster(Number(event.target.value))} /><output>{master}%</output></label>
         </section>
       </div>
     </main>
