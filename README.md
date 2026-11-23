@@ -1,8 +1,10 @@
 # Toybox and Waypin
 
-Toybox is the home screen. Choose Classical, Rock, or Orchestra, press **Play**, and tap a toy to hear its instrument. Edit the note grid and mixer directly, or ask Gemini for changes like “slow it down and make the drums softer.” The editable two-bar arrangement is saved in this browser. Browsers synthesize the audio from notes with Web Audio. Gemini returns arrangement edits as structured JSON using Firebase AI Logic when connected, with Chrome Nano available on supported devices when offline.
+Toybox’s landing page has playable examples for games, videos, and songwriting. In the studio, pick one of eight genres or ask Gemini to write an entire instrumental for ten toy musicians. Play the song across its sections, change the notes, preview individual instruments, and export the complete mix as a WAV. Your arrangement is saved in this browser.
 
-[Open Toybox](https://manateek1.github.io/waypin/studio/)
+Firebase AI Logic generates a structured melody, section plan, and mixer edits. Toybox expands the plan into editable notes and synthesizes the sound with Web Audio. The cloud uses the Spark tier. Supported desktop Chrome devices can also arrange on-device with Gemini Nano.
+
+[Open Toybox](https://manateek1.github.io/waypin/) · [Go directly to the studio](https://manateek1.github.io/waypin/studio/)
 
 ## Waypin field audit
 

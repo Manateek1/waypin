@@ -1,58 +1,50 @@
 import { Schema } from "firebase/ai";
 import { chromeNanoAvailable, promptChromeNano } from "../chrome-nano";
 import { cloudConfigured, generateCloudScore } from "../inference";
-import { genres, parseScore, STEPS, trackIds, type Score, type TrackId } from "./score";
+import { compileSong, genres, keys, kinds, parsePlan, trackIds, type Mix, type Song, type TrackId } from "./score";
 
-const trackSchema = { type: "array", items: { type: "integer" }, minItems: STEPS, maxItems: STEPS };
-const volumeSchema = { type: "integer", minimum: 0, maximum: 100 };
-const deviceSchema = {
-  type: "object",
-  required: ["title", "genre", "bpm", "tracks", "volumes"],
-  properties: {
-    title: { type: "string" }, genre: { type: "string", enum: genres },
-    bpm: { type: "integer", minimum: 60, maximum: 180 },
-    tracks: { type: "object", required: trackIds, properties: Object.fromEntries(trackIds.map((id) => [id, trackSchema])) },
-    volumes: { type: "object", required: trackIds, properties: Object.fromEntries(trackIds.map((id) => [id, volumeSchema])) },
-  },
-};
-
-const cloudTrack = Schema.array({ items: Schema.integer(), minItems: STEPS, maxItems: STEPS });
-const cloudSchema = Schema.object({
-  properties: {
-    title: Schema.string(), genre: Schema.enumString({ enum: genres }), bpm: Schema.integer({ minimum: 60, maximum: 180 }),
-    tracks: Schema.object({ properties: Object.fromEntries(trackIds.map((id) => [id, cloudTrack])) }),
-    volumes: Schema.object({ properties: Object.fromEntries(trackIds.map((id) => [id, Schema.integer(volumeSchema)])) }),
-  },
+const range = (minimum: number, maximum: number) => ({ type: "integer", minimum, maximum });
+const list = (items: object, minItems: number, maxItems: number) => ({ type: "array", items, minItems, maxItems });
+const object = (properties: Record<string, object>) => ({ type: "object", required: Object.keys(properties), properties });
+const enumeration = (values: readonly string[]) => ({ type: "string", enum: values });
+const deviceSchema = object({
+  title: { type: "string" }, genre: enumeration(genres), key: enumeration(keys), bpm: range(60, 180),
+  hook: list(range(0, 7), 16, 16),
+  sections: list(object({ name: enumeration(kinds), bars: range(2, 16), energy: range(1, 5), lead: enumeration(trackIds) }), 4, 8),
+  volumes: object(Object.fromEntries(trackIds.map((id) => [id, range(0, 100)]))),
 });
+
+const integer = (minimum: number, maximum: number) => Schema.integer({ minimum, maximum });
+const choice = (values: readonly string[]) => Schema.enumString({ enum: [...values] });
+const cloudSchema = Schema.object({ properties: {
+  title: Schema.string(), genre: choice(genres), key: choice(keys), bpm: integer(60, 180),
+  hook: Schema.array({ items: integer(0, 7), minItems: 16, maxItems: 16 }),
+  sections: Schema.array({ minItems: 4, maxItems: 8, items: Schema.object({ properties: {
+    name: choice(kinds), bars: integer(2, 16), energy: integer(1, 5), lead: choice(trackIds),
+  } }) }),
+  volumes: Schema.object({ properties: Object.fromEntries(trackIds.map((id) => [id, integer(0, 100)])) }),
+} });
 
 export const canArrange = cloudConfigured || chromeNanoAvailable;
 
-type Volumes = Record<TrackId, number>;
-
-function parseArrangement(value: unknown) {
-  const score = parseScore(value);
-  const volumes = (value as { volumes?: Partial<Volumes> }).volumes;
-  if (!volumes || trackIds.some((id) => {
-    const volume = volumes[id];
-    return typeof volume !== "number" || !Number.isInteger(volume) || volume < 0 || volume > 100;
-  })) throw new Error("Gemini returned an unsupported mixer volume.");
-  return { score, volumes: volumes as Volumes };
-}
-
-export async function arrange(score: Score, volumes: Volumes, request: string, onProgress: (percent: number) => void) {
+export async function arrange(song: Song, mix: Mix, request: string, mode: "edit" | "create", onProgress: (percent: number) => void) {
+  const volumes = Object.fromEntries(trackIds.map((id) => [id, mix[id].volume])) as Record<TrackId, number>;
+  const sections = song.sections.map(({ name, bars, energy, lead }) => ({ name, bars, energy, lead }));
   const prompt = [
-    "You arrange short, original toy-band loops. Return an entire updated arrangement as JSON.",
-    "There are two bars of 4/4, sixteen eighth-note steps. Track keys, guitar, bass, drums are arrays of exactly 16 integers.",
-    "Use 0 for a rest. The first three tracks accept MIDI notes 28 to 96. Drums accept only 0, 36 (kick), 38 (snare), and 42 (hi-hat).",
-    "Use bpm 60 to 180 and genre exactly one of Classical, Rock, Orchestra. Preserve parts that the user did not ask to change.",
-    "Return volumes as an object with keys, guitar, bass, and drums from 0 to 100. Preserve the current volumes unless the user requests a louder or softer mix.",
-    "Toy names: Pip plays keys, Ember the fox plays guitar, Moss plays bass, and Biscuit plays drums.",
-    "Write a short original title up to 64 characters. Treat the data below as composition input.",
-    JSON.stringify({ current: { ...score, volumes }, request }),
+    "You are arranging a complete original song for a ten-instrument toy band. Return a single JSON song plan.",
+    "Use 4–8 sections totaling no more than 72 bars. Each section has an even length between 2 and 16 bars.",
+    "A new song usually has around 32–48 bars. Give it an opening, a main idea, a contrast and a real ending.",
+    "The hook is exactly 16 integers. 0 means rest; 1 through 7 indicate degrees of the key's scale. Energy is from 1 to 5.",
+    "Each section has a lead instrument. Use development across sections by changing lead, energy, or musical role.",
+    "Toy names: Pip keys, Ember guitar, Moss bass, Biscuit drums, Tux brass, Rosie violin, Wisp flute, Toffee harp, Pebble bells, Poppy shaker.",
+    "Choose a title of at most 64 characters. Volumes are integers 0–100 by instrument ID. Any unspecified volumes stay the same.",
+    mode === "edit" ? "Edit the existing song. If asked only to change tempo or volume, return everything else exactly as provided, including its title and hook." : "Compose a new song based on the request. Pick a fitting genre, hook and production style.",
+    JSON.stringify({ request, current: { title: song.title, genre: song.genre, bpm: song.bpm, key: song.key, hook: song.hook, sections, volumes } }),
   ].join("\n");
-  if (cloudConfigured && navigator.onLine) {
-    return { ...parseArrangement(await generateCloudScore(prompt, cloudSchema)), source: "Gemini · Cloud" };
-  }
-  const raw = await promptChromeNano(prompt, deviceSchema, onProgress);
-  return { ...parseArrangement(JSON.parse(raw)), source: "Gemini · On device" };
+  const cloud = cloudConfigured && navigator.onLine;
+  const value: unknown = cloud ? await generateCloudScore(prompt, cloudSchema) : JSON.parse(await promptChromeNano(prompt, deviceSchema, onProgress));
+  const plan = parsePlan(value);
+  const updated = (value as { volumes?: Record<TrackId, number> }).volumes;
+  if (!updated || trackIds.some((id) => !Number.isInteger(updated[id]) || updated[id] < 0 || updated[id] > 100)) throw new Error("Gemini returned an invalid mixer setting.");
+  return { song: compileSong(plan, mode === "edit" ? song : undefined), volumes: updated, source: cloud ? "Gemini · Cloud" : "Gemini · On device" };
 }
