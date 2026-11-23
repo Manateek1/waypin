@@ -138,32 +138,64 @@ export const durationBars = (song: Song) => song.sections.reduce((sum, section) 
 export const durationSecs = (song: Song) => durationBars(song) * 240 / song.bpm;
 export const timeLabel = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 
-export function loadSong() {
-  const example = examples.find(({ id }) => id === new URLSearchParams(location.search).get("example"));
-  if (example) return preset(example.genre);
+function readSaved<T>(key: string): T | null {
   try {
-    const json = localStorage.getItem("toybox-full-song");
-    if (json) {
-      const parsed = JSON.parse(json) as Song;
-      parsePlan(parsed);
-      if (parsed.sections.every((section) => trackIds.every((id) =>
-        section.tracks[id].length === section.bars * STEPS_PER_BAR && section.tracks[id].every((note) => validNote(id, note))))) return parsed;
+    return JSON.parse(localStorage.getItem(key) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+function savedSong(song: Song | null | undefined) {
+  try {
+    parsePlan(song);
+    if (song?.sections.every((section) => trackIds.every((id) => {
+      const notes = section.tracks?.[id];
+      return Array.isArray(notes) && notes.length === section.bars * STEPS_PER_BAR && notes.every((note) => validNote(id, note));
+    }))) return song;
+  } catch { /* Fall back to an earlier save or a preset. */ }
+}
+
+function legacySong() {
+  const old = readSaved<Partial<SongPlan> & { tracks?: Partial<Tracks> }>("waypin-toybox-score");
+  if (!old?.genre || !genres.includes(old.genre) || typeof old.title !== "string"
+    || !old.title.trim() || typeof old.bpm !== "number" || !Number.isInteger(old.bpm) || old.bpm < 60 || old.bpm > 180) return;
+  const song = preset(old.genre);
+  song.title = old.title.trim().slice(0, 64);
+  song.bpm = old.bpm;
+  for (const id of ["keys", "guitar", "bass", "drums"] as const) {
+    const notes = old.tracks?.[id];
+    if (Array.isArray(notes) && notes.length === 16 && notes.every((note) => validNote(id, note))) {
+      song.sections[0].tracks[id].splice(0, 16, ...notes);
     }
-    const old = JSON.parse(localStorage.getItem("waypin-toybox-score") ?? "null");
-    if (old && genres.includes(old.genre) && typeof old.title === "string" && Number.isInteger(old.bpm) && old.bpm >= 60 && old.bpm <= 180) {
-      const song = preset(old.genre);
-      song.title = old.title.slice(0, 64);
-      song.bpm = old.bpm;
-      for (const id of ["keys", "guitar", "bass", "drums"] as const) {
-        const notes: unknown[] | undefined = old.tracks?.[id];
-        if (Array.isArray(notes) && notes.length === 16 && notes.every((note) => validNote(id, note))) {
-          song.sections[0].tracks[id].splice(0, 16, ...(notes as number[]));
-        }
-      }
-      return song;
+  }
+  return song;
+}
+
+type StudioSettings = { song: Song; mix: Mix; master: number; loop: boolean };
+const volumeInRange = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100;
+
+export function loadStudio() {
+  const example = examples.find(({ id }) => id === new URLSearchParams(location.search).get("example"));
+  const key = example ? `toybox-studio:${example.id}` : "toybox-studio";
+  const saved = readSaved<Partial<StudioSettings>>(key);
+  const song = savedSong(saved?.song) ?? (example
+    ? preset(example.genre)
+    : savedSong(readSaved<Song>("toybox-full-song")) ?? legacySong() ?? preset("Orchestra"));
+  const mix = defaultMix();
+  for (const id of trackIds) {
+    const track = saved?.mix?.[id];
+    if (track && volumeInRange(track.volume) && typeof track.muted === "boolean") {
+      mix[id] = track;
     }
-  } catch { /* A fresh song also works in browsers that block local storage. */ }
-  return preset("Orchestra");
+  }
+  return { key, song, mix, master: volumeInRange(saved?.master) ? saved.master : 82, loop: saved?.loop === true };
+}
+
+export function saveStudio(key: string, settings: StudioSettings) {
+  try {
+    localStorage.setItem(key, JSON.stringify(settings));
+  } catch { /* Playback and editing also work with storage disabled. */ }
 }
 
 const noteNames = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];

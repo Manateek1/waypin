@@ -32,8 +32,8 @@ export function MusicLanding() {
       const song = preset(genre);
       const mix = defaultMix();
       player.current ??= new ToyBand();
-      await player.current.play(() => ({ song, mix, master: 78, loop: false }), () => undefined, 2);
-      timer.current = window.setTimeout(stop, 12000);
+      const started = await player.current.play(() => ({ song, mix, master: 78, loop: false }), () => undefined, 2);
+      if (started) timer.current = window.setTimeout(stop, 12000);
     } catch {
       stop();
       setAudioError(true);

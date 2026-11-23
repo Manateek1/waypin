@@ -3,17 +3,18 @@ import { ArrowLeft, ArrowRight, AudioLines, Download, Headphones, Music2, Play, 
 import { appPath } from "../paths";
 import { arrange, canArrange } from "./arrange";
 import { renderSong, ToyBand, type Position } from "./audio";
-import { defaultMix, durationBars, durationSecs, genres, loadSong, noteLabel, preset, STEPS_PER_BAR, timeLabel, toys, trackIds, type Genre, type Mix, type Song, type TrackId } from "./score";
+import { durationBars, durationSecs, genres, loadStudio, noteLabel, preset, saveStudio, STEPS_PER_BAR, timeLabel, toys, trackIds, type Genre, type Mix, type Song, type TrackId } from "./score";
 import "./studio.css";
 import "./songs.css";
 
 const promptIdeas = ["Write an upbeat arcade theme", "Give Rosie the bridge", "Slow it down and soften the drums"];
 
 export function Studio() {
-  const [song, setSong] = useState(loadSong);
-  const [mix, setMix] = useState(defaultMix);
-  const [master, setMaster] = useState(82);
-  const [loop, setLoop] = useState(false);
+  const [initial] = useState(loadStudio);
+  const [song, setSong] = useState(initial.song);
+  const [mix, setMix] = useState(initial.mix);
+  const [master, setMaster] = useState(initial.master);
+  const [loop, setLoop] = useState(initial.loop);
   const [starting, setStarting] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState<Position | null>(null);
@@ -35,7 +36,7 @@ export function Studio() {
   const busy = !!pending;
   const time = position ? (song.sections.slice(0, position.section).reduce((sum, part) => sum + part.bars * STEPS_PER_BAR, 0) + position.step) * 30 / song.bpm : 0;
 
-  useEffect(() => { try { localStorage.setItem("toybox-full-song", JSON.stringify(song)); } catch { /* Storage is optional. */ } }, [song]);
+  useEffect(() => saveStudio(initial.key, { song, mix, master, loop }), [initial.key, song, mix, master, loop]);
   useEffect(() => player.current?.updateMix(mix, master), [mix, master]);
   useEffect(() => () => { void player.current?.close().catch(() => undefined); }, []);
 
@@ -50,11 +51,11 @@ export function Studio() {
     setStarting(true);
     try {
       player.current ??= new ToyBand();
-      await player.current.play(() => current.current, (next) => {
+      const started = await player.current.play(() => current.current, (next) => {
         setPosition(next);
         if (!next) setPlaying(false);
       }, first);
-      setPlaying(true);
+      if (started) setPlaying(true);
     } catch {
       setMessage("Audio could not start. Check whether this tab can play sound.");
     } finally {
@@ -69,11 +70,12 @@ export function Studio() {
   }
 
   function apply(next: Song, origin: string) {
-    setPrevious({ song, mix });
+    setPrevious({ song: current.current.song, mix: current.current.mix });
     stop();
     setSong(next);
     setSource(origin);
     pickSection(0);
+    setMode("edit");
   }
 
   async function generate(event: FormEvent<HTMLFormElement>) {
@@ -90,7 +92,6 @@ export function Studio() {
         id, { ...latest[id], volume: result.volumes[id] === mix[id].volume ? latest[id].volume : result.volumes[id] },
       ])) as Mix);
       setPrompt("");
-      setMode("edit");
       setMessage(`${result.song.title} is ready to play · ${durationBars(result.song)} bars.`);
     } catch (error) {
       setMessage(error instanceof Error ? `Couldn’t apply that request. ${error.message}` : "Couldn’t apply that request. Your song is still playable.");

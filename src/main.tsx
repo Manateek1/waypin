@@ -11,10 +11,13 @@ import "./styles.css";
 const path = location.pathname.replace(/\/$/, "");
 const isAudit = path === appPath("audit") || path === appPath("audit/index.html");
 const isFieldGuide = path === appPath("field-guide") || path === appPath("field-guide/index.html");
-if (isAudit || isFieldGuide) document.title = "Waypin — Make barriers visible";
+const isStudio = path === appPath("studio") || path === appPath("studio/index.html");
+if (isAudit) document.title = "Waypin — Field audit";
+if (isFieldGuide) document.title = "Waypin — Field guide";
+if (isStudio) document.title = "Toybox — Song Studio";
 const app = isAudit
   ? <Workspace />
-  : isFieldGuide ? <Landing /> : path === appPath("studio") || path === appPath("studio/index.html") ? <Studio /> : <MusicLanding />;
+  : isFieldGuide ? <Landing /> : isStudio ? <Studio /> : <MusicLanding />;
 createRoot(document.getElementById("root")!).render(app);
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
