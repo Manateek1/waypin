@@ -147,6 +147,18 @@ pre { font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; max-hei
 .brief-editor { display: grid; gap: .65rem; margin: .8rem 0; }
 .brief-editor fieldset { padding: .5rem .65rem .65rem; border: 1px solid var(--line); border-radius: 7px; }
 .brief-editor legend { font-weight: 750; padding: 0 .25rem; }
+.brief-editor .text-button { justify-self: start; }
+.finding-reference { color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
+.audit-library { display: grid; gap: .5rem; list-style: none; margin: .9rem 0; padding: 0; }
+.audit-library li { min-width: 0; padding: .35rem .55rem; background: #fbfaf4; border: 1px solid var(--line); border-radius: 8px; }
+.library-row { display: flex; align-items: center; gap: .6rem; }
+.library-row .icon-button { flex-shrink: 0; }
+.library-open { display: grid; gap: .22rem; flex: 1; text-align: left; min-width: 0; min-height: 44px; padding: .5rem .2rem; border: 0; background: transparent; color: var(--ink); overflow-wrap: anywhere; }
+.library-open:hover strong { text-decoration: underline; }
+.library-open span { font-size: .78rem; color: var(--muted); }
+.export-controls { margin-top: .8rem; padding-top: .5rem; border-top: 1px solid var(--line); }
+.check-label { display: flex; align-items: center; gap: .5rem; width: fit-content; margin: .55rem 0 .75rem; }
+.check-label input { width: auto; margin: 0; accent-color: var(--green); }
 .print-report { display: none; }
 
 @media (max-width: 900px) {
@@ -193,9 +205,14 @@ pre { font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; max-hei
   body { color: #000; background: #fff; }
   #root > :not(.print-report) { display: none !important; }
   .print-report { display: block; }
-  .print-report h1 { font-size: 26pt; margin-bottom: .4em; }
-  .print-report h2 { font-size: 17pt; margin-top: 1em; }
-  .print-report h3 { font-size: 12pt; margin: .65em 0 .15em; }
-  .print-report p { margin-bottom: .25em; }
-  .print-report section { break-inside: avoid; }
+  .print-report header { padding-bottom: .9em; border-bottom: 2px solid #284632; }
+  .print-report header strong { color: #284632; font-size: 9pt; letter-spacing: .1em; }
+  .print-report h1 { font-size: 27pt; margin: .25em 0 .14em; }
+  .print-report h2 { font-size: 17pt; margin: .85em 0 .3em; break-after: avoid; }
+  .print-report h3 { font-size: 12pt; margin-bottom: .23em; }
+  .print-report p { margin-bottom: .25em; overflow-wrap: anywhere; }
+  .print-report section { break-inside: avoid; border-top: 1px solid #a0ad9f; margin-top: .55em; padding-top: .4em; }
+  .print-report a { text-decoration: none; }
+  .print-report img { max-width: 72%; max-height: 1.7in; object-fit: contain; margin: .45em 0; }
+  .print-report footer { margin-top: 1.05em; font-size: 9pt; color: #284632; }
 }

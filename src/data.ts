@@ -25,6 +25,7 @@ export type Finding = {
 export type Action = { findingId: string; priority: "First" | "Next" | "Follow up"; action: string; verify: string };
 export type Brief = { title: string; summary: string; actions: Action[]; origin: Origin };
 export type Audit = { title: string; sample: boolean; findings: Finding[]; brief: Brief | null };
+export type AuditLibrary = { activeId: string; entries: { id: string; audit: Audit }[] };
 
 export const seed: Finding[] = [
   { id: "WP-01", station: "entrance", category: "Path obstruction", condition: "Obstructed", note: "A crate and traffic cone occupy the middle of the entrance ramp.", check: "Confirm the ramp stays clear during event setup.", measurement: null, photo: "/evidence/entrance.jpg", origin: "Sample" },
@@ -46,6 +47,11 @@ export const sampleBrief: Brief = {
 export const stationName = (id: StationId) => stations.find((station) => station.id === id)!.name;
 export const sampleAudit: Audit = { title: "Marigold Arts Center", sample: true, findings: seed, brief: null };
 export const newAudit = (): Audit => ({ title: "Untitled venue", sample: false, findings: [], brief: null });
+export function createLibrary(audit = sampleAudit): AuditLibrary {
+  return { activeId: "first-audit", entries: [{ id: "first-audit", audit }] };
+}
+
+export const findingReference = (id: string) => id.startsWith("WP-") ? id : `WP-${id.slice(0, 8).toUpperCase()}`;
 
 export function approvedPayload(findings: Finding[]) {
   return findings.map(({ id, station, category, condition, measurement }) => ({
