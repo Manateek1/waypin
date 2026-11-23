@@ -4,17 +4,17 @@ Waypin helps community venue volunteers document accessibility barriers in the f
 
 [Open the sample demo](https://manateek1.github.io/waypin/)
 
-The public sample uses a fictional venue and generated photos. Explore the route, add or edit a finding, preview the handoff payload, and open the labeled sample brief. A configured Firebase build enables live inference.
+The public demo uses a fictional venue and generated photos. On compatible desktop Chrome, Waypin calls the browser’s built-in Gemini Nano for live photo observations and quick briefs. It works with an initial model download and then can run offline. Other browsers can use manual review, reports, and the labeled sample replay. A separate Firebase configuration enables the cloud modes.
 
 ## How inference works
 
 | Task | Firebase AI Logic mode | Input |
 | --- | --- | --- |
-| Photo observation | `ONLY_ON_DEVICE` | JPEG and a bounded observation prompt |
-| Quick handoff | `PREFER_ON_DEVICE` | Reviewed station, category, condition, and optional measurement |
+| Photo observation | Chrome Prompt API or `ONLY_ON_DEVICE` | JPEG and a bounded observation prompt |
+| Quick handoff | Chrome Prompt API or `PREFER_ON_DEVICE` | Reviewed station, category, condition, and optional measurement |
 | Full handoff | `ONLY_IN_CLOUD` | The same reviewed fields and finding IDs |
 
-The UI reads the Firebase response’s inference source. Uploaded images are re-encoded in the browser and saved with the audit in IndexedDB. The cloud preview lists every finding field used in the request. Photo bytes, venue names, private notes, and field verification notes are excluded. Generated actions must reference each finding exactly once. All observations and brief text remain editable.
+The UI identifies on-device results and reads the Firebase response’s inference source for Firebase runs. Uploaded images are re-encoded in the browser and saved with the audit in IndexedDB. The brief preview lists every finding field used in the request. Photo bytes, venue names, private notes, and field verification notes are excluded from brief prompts. Generated actions must reference each finding exactly once. All observations and brief text remain editable.
 
 ## Run locally
 
@@ -23,7 +23,7 @@ npm ci
 npm run dev
 ```
 
-Visit the displayed URL. The app works in sample mode without credentials. A production build adds the offline cache:
+Visit the displayed URL. Chrome's on-device mode and sample replay work without cloud credentials. A production build adds the offline cache:
 
 ```sh
 npm run build
@@ -43,8 +43,8 @@ npm run preview
 ## Judge walkthrough
 
 1. Open the sample audit and select **Main entrance**.
-2. Open **Review finding** to see the photo and editable observations. In a configured live build, use **Analyze on device** and review the resulting observation before saving.
-3. Choose **Build handoff**, then expand the exact payload. Use **Open sample replay** in the public sample or generate a live brief in a configured build.
+2. Open **Review finding** to see the photo and editable observations. On supported desktop Chrome, use **Analyze on device** and review the resulting observation before saving.
+3. Choose **Build handoff**, then expand the exact payload. Use **Generate on device** on supported desktop Chrome or **Open sample replay** on other browsers.
 4. Edit the brief and choose **Print or save brief as PDF**.
 
 Waypin surfaces observations and follow-up questions for human review. It does not determine whether a venue meets accessibility standards.
