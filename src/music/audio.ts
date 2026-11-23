@@ -1,12 +1,12 @@
 import { Voices } from "./samples";
 import { encodeMp3, encodeWav, type AudioFormat } from "./exportAudio";
-import { durationSecs, STEPS_PER_BAR, trackIds, type Genre, type Mix, type Section, type Song, type TrackId } from "./score";
+import { durationSecs, jazzShellNote, STEPS_PER_BAR, trackIds, type Genre, type Mix, type Section, type Song, type TrackId } from "./score";
 
 export type Position = { section: number; step: number };
 type PlayerState = { song: Song; mix: Mix; master: number; loop: boolean };
 
 const releaseTail = 1.25;
-const swing = (genre: Genre, step: number) => step % 2 ? genre === "Jazz" ? .28 : genre === "Lo-fi" ? .15 : 0 : 0;
+const swing = (genre: Genre, step: number) => step % 2 ? genre === "Jazz" ? .34 : genre === "Lo-fi" ? .15 : 0 : 0;
 const pan: Record<TrackId, number> = {
   keys: -.36, guitar: .36, bass: 0, drums: .03, brass: .28, violin: -.50, flute: -.18, harp: .46, bells: .26, shaker: -.30,
 };
@@ -41,7 +41,8 @@ function mixTrack(ctx: BaseAudioContext, bus: AudioNode, id: TrackId) {
   return gain;
 }
 
-function playStep(voices: Voices, id: TrackId, section: Section, step: number, time: number, gap: number, genre: Genre, destination: AudioNode) {
+function playStep(voices: Voices, id: TrackId, section: Section, step: number, time: number, gap: number, song: Song, destination: AudioNode) {
+  const { genre, key } = song;
   const notes = section.tracks[id];
   const note = notes[step];
   if (!note) return;
@@ -59,12 +60,22 @@ function playStep(voices: Voices, id: TrackId, section: Section, step: number, t
   const shape = Math.sin(Math.PI * (position + 3) / 38);
   const arc = section.name === "Outro" ? 1 - .23 * bar / section.bars : .88 + .15 * shape;
   const weight = id === section.lead ? 1.15 : .88;
-  const accent = (beat === 0 ? 1 : beat % 2 === 0 ? .89 : .75) * (.46 + section.energy * .112) * arc * weight;
+  const rhythm = id === "drums" && genre === "Jazz" ? note === 42 ? .96 : .45
+    : id === "drums" && genre === "Rock" && note === 38 ? 1.25 : beat === 0 ? 1 : beat % 2 === 0 ? .89 : .75;
+  const accent = rhythm * (.46 + section.energy * .112) * arc * weight;
   const laidBack = ["Orchestra", "Classical", "Folk", "Jazz", "Lo-fi"].includes(genre);
   const delay = laidBack ? Math.min(.029, (pan[id] + .5) * .015 + (position % 3) * .004) : 0;
   const start = time + swing(genre, step) * gap + delay;
   const held = (length + swing(genre, step + length) - swing(genre, step)) * gap * (laidBack ? .96 : .86);
   voices.play(id, note, start, held, accent, genre, destination);
+  if (genre === "Jazz" && id === "keys" && section.lead !== "keys" && !finalBar) {
+    voices.play(id, jazzShellNote(note, key), start + .009, held * .85, accent * .65, genre, destination);
+  }
+  if (genre === "Rock" && id === "guitar" && (beat === 0 || beat === 4 || section.name === "Chorus")) {
+    const root = note > 64 ? note - 12 : note;
+    voices.play(id, root + 7, start + .012, held * .91, accent * .52, genre, destination);
+    if (root !== note) voices.play(id, root, start + .006, held, accent * .68, genre, destination);
+  }
 }
 
 
@@ -124,7 +135,7 @@ export class ToyBand {
         const position = { section: sectionIndex, step };
         if (next >= ctx.currentTime) {
           for (const id of trackIds) {
-            playStep(voices, id, section, step, next, gap, song.genre, this.tracks![id]);
+            playStep(voices, id, section, step, next, gap, song, this.tracks![id]);
           }
           this.at(next, () => onStep(position));
         }
@@ -200,7 +211,7 @@ export async function renderSong(song: Song, mix: Mix, master: number, format: A
     let offset = 0;
     for (const section of song.sections) {
       section.tracks[id].forEach((_, step) => {
-        playStep(voices, id, section, step, .02 + (offset + step) * gap, gap, song.genre, gain);
+        playStep(voices, id, section, step, .02 + (offset + step) * gap, gap, song, gain);
       });
       offset += section.bars * STEPS_PER_BAR;
     }
