@@ -1,4 +1,4 @@
-import { getAI, getGenerativeModel, GoogleAIBackend, InferenceMode, InferenceSource } from "firebase/ai";
+import { getAI, getGenerativeModel, GoogleAIBackend, InferenceMode, InferenceSource, Schema } from "firebase/ai";
 import { initializeApp } from "firebase/app";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import { approvedPayload, categories, conditions, type Action, type Brief, type Finding, type Origin } from "./data";
@@ -114,6 +114,19 @@ async function firebaseBrief(prompt: string, quick: boolean) {
   if (quick) void model.initializeDeviceModel().catch(() => undefined);
   const result = await model.generateContent(prompt);
   return { raw: result.response.text(), origin: inferenceOrigin(result.response.inferenceSource) };
+}
+
+export async function generateCloudScore(prompt: string, schema: Schema) {
+  const model = getGenerativeModel(backend(true), {
+    mode: InferenceMode.ONLY_IN_CLOUD,
+    inCloudParams: {
+      ...cloudParams,
+      generationConfig: { responseMimeType: "application/json", responseSchema: schema, maxOutputTokens: 1800, temperature: 0.55 },
+    },
+  });
+  const result = await model.generateContent(prompt);
+  if (result.response.inferenceSource !== InferenceSource.IN_CLOUD) throw new Error("Cloud Gemini did not confirm the inference source.");
+  return parseObject(result.response.text());
 }
 
 const priorities = ["First", "Next", "Follow up"] as const;
