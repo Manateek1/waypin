@@ -5,19 +5,65 @@ import { durationSecs, STEPS_PER_BAR, trackIds, type Genre, type Mix, type Secti
 export type Position = { section: number; step: number };
 type PlayerState = { song: Song; mix: Mix; master: number; loop: boolean };
 
-const releaseTail = 1;
+const releaseTail = 1.25;
 const swing = (genre: Genre, step: number) => step % 2 ? genre === "Jazz" ? .28 : genre === "Lo-fi" ? .15 : 0 : 0;
+const pan: Record<TrackId, number> = {
+  keys: -.36, guitar: .36, bass: 0, drums: .03, brass: .28, violin: -.50, flute: -.18, harp: .46, bells: .26, shaker: -.30,
+};
+
+function mixBus(ctx: BaseAudioContext, genre: Genre) {
+  const bus = ctx.createGain();
+  const limiter = ctx.createDynamicsCompressor();
+  bus.connect(limiter).connect(ctx.destination);
+  const room = ctx.createConvolver();
+  const wet = ctx.createGain();
+  wet.gain.value = genre === "Orchestra" || genre === "Classical" ? .20 : .12;
+  const impulse = ctx.createBuffer(2, Math.ceil(ctx.sampleRate * .72), ctx.sampleRate);
+  let seed = 1879;
+  for (let channel = 0; channel < 2; channel++) {
+    const data = impulse.getChannelData(channel);
+    const start = Math.round(ctx.sampleRate * (.027 + channel * .007));
+    for (let sample = start; sample < data.length; sample++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      data[sample] = (seed / 2147483648 - 1) * Math.pow(1 - sample / data.length, 4);
+    }
+  }
+  room.buffer = impulse;
+  bus.connect(room).connect(wet).connect(limiter);
+  return { bus, limiter };
+}
+
+function mixTrack(ctx: BaseAudioContext, bus: AudioNode, id: TrackId) {
+  const gain = ctx.createGain();
+  const placement = ctx.createStereoPanner();
+  placement.pan.value = pan[id];
+  gain.connect(placement).connect(bus);
+  return gain;
+}
 
 function playStep(voices: Voices, id: TrackId, section: Section, step: number, time: number, gap: number, genre: Genre, destination: AudioNode) {
   const notes = section.tracks[id];
   const note = notes[step];
   if (!note) return;
   let length = 1;
-  while (length < 4 && !notes[step + length]) length++;
+  const position = step % 32;
+  const leadPhrase = id === section.lead ? section.phrase : undefined;
+  const finalBar = section.name === "Outro" && step >= (section.bars - 1) * STEPS_PER_BAR;
+  if (leadPhrase && /[1-7]/.test(leadPhrase[position] ?? "") && !finalBar) {
+    while (length < 8 && leadPhrase[(position + length) % 32] === "-" && !notes[step + length]) length++;
+  } else {
+    while (length < (finalBar ? 7 : 4) && !notes[step + length]) length++;
+  }
   const beat = step % STEPS_PER_BAR;
-  const accent = (beat === 0 ? 1 : beat % 2 === 0 ? .86 : .67) * (.66 + section.energy * .083);
-  const start = time + swing(genre, step) * gap;
-  const held = (length + swing(genre, step + length) - swing(genre, step)) * gap * .9;
+  const bar = Math.floor(step / STEPS_PER_BAR);
+  const shape = Math.sin(Math.PI * (position + 3) / 38);
+  const arc = section.name === "Outro" ? 1 - .23 * bar / section.bars : .88 + .15 * shape;
+  const weight = id === section.lead ? 1.15 : .88;
+  const accent = (beat === 0 ? 1 : beat % 2 === 0 ? .89 : .75) * (.46 + section.energy * .112) * arc * weight;
+  const laidBack = ["Orchestra", "Classical", "Folk", "Jazz", "Lo-fi"].includes(genre);
+  const delay = laidBack ? Math.min(.029, (pan[id] + .5) * .015 + (position % 3) * .004) : 0;
+  const start = time + swing(genre, step) * gap + delay;
+  const held = (length + swing(genre, step + length) - swing(genre, step)) * gap * (laidBack ? .96 : .86);
   voices.play(id, note, start, held, accent, genre, destination);
 }
 
@@ -51,16 +97,10 @@ export class ToyBand {
       throw error;
     }
     if (playback !== this.playback) return false;
-    const bus = ctx.createGain();
-    const limiter = ctx.createDynamicsCompressor();
-    bus.connect(limiter).connect(ctx.destination);
+    const { bus, limiter } = mixBus(ctx, read().song.genre);
     this.bus = bus;
     this.limiter = limiter;
-    this.tracks = Object.fromEntries(trackIds.map((id) => {
-      const gain = ctx.createGain();
-      gain.connect(bus);
-      return [id, gain];
-    })) as Record<TrackId, GainNode>;
+    this.tracks = Object.fromEntries(trackIds.map((id) => [id, mixTrack(ctx, bus, id)])) as Record<TrackId, GainNode>;
     this.active = true;
     let next = ctx.currentTime + .06;
     let sectionIndex = firstSection;
@@ -147,18 +187,16 @@ export class ToyBand {
 
 export async function renderSong(song: Song, mix: Mix, master: number, format: AudioFormat) {
   const rate = 44100;
-  const ctx = new OfflineAudioContext(1, Math.ceil((durationSecs(song) + releaseTail) * rate), rate);
-  const bus = ctx.createGain();
+  const ctx = new OfflineAudioContext(2, Math.ceil((durationSecs(song) + releaseTail) * rate), rate);
+  const { bus } = mixBus(ctx, song.genre);
   bus.gain.value = master / 100;
-  bus.connect(ctx.createDynamicsCompressor()).connect(ctx.destination);
   const voices = new Voices(ctx);
   const audibleTracks = trackIds.filter((id) => !mix[id].muted && mix[id].volume > 0);
   await voices.load(song.genre, audibleTracks);
   const gap = 30 / song.bpm;
   for (const id of audibleTracks) {
-    const gain = ctx.createGain();
+    const gain = mixTrack(ctx, bus, id);
     gain.gain.value = mix[id].volume / 100;
-    gain.connect(bus);
     let offset = 0;
     for (const section of song.sections) {
       section.tracks[id].forEach((_, step) => {
@@ -167,6 +205,8 @@ export async function renderSong(song: Song, mix: Mix, master: number, format: A
       offset += section.bars * STEPS_PER_BAR;
     }
   }
-  const samples = (await ctx.startRendering()).getChannelData(0);
-  return format === "mp3" ? encodeMp3(samples, rate) : encodeWav(samples, rate);
+  const rendered = await ctx.startRendering();
+  const left = rendered.getChannelData(0);
+  const right = rendered.getChannelData(1);
+  return format === "mp3" ? encodeMp3(left, right, rate) : encodeWav(left, right, rate);
 }
