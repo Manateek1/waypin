@@ -47,6 +47,8 @@ npm run preview
 3. Choose **Build handoff**, then expand the exact payload. Use **Generate on device** on supported desktop Chrome or **Open sample replay** on other browsers.
 4. Edit the brief and choose **Print or save brief as PDF**.
 
+Use **My audits** to switch between saved venues or add a fresh fictional sample. Starting a new audit keeps the previous audit and its evidence in this browser. In a brief, **View evidence** opens the finding behind that action. When exporting, turn on **Include evidence photos** only for copies where the recipient should see them.
+
 Waypin surfaces observations and follow-up questions for human review. It does not determine whether a venue meets accessibility standards.
 
 ## Assets

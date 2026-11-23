@@ -1,4 +1,4 @@
-import type { Audit } from "./data";
+import { createLibrary, type Audit, type AuditLibrary } from "./data";
 
 function openDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
@@ -9,25 +9,33 @@ function openDatabase() {
   });
 }
 
-export async function readAudit(): Promise<Audit | undefined> {
+export async function readAuditLibrary(): Promise<AuditLibrary> {
   const database = await openDatabase();
   try {
     return await new Promise((resolve, reject) => {
-      const request = database.transaction("audit").objectStore("audit").get("current");
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      const store = database.transaction("audit").objectStore("audit");
+      const library = store.get("library");
+      const legacy = store.get("current");
+      store.transaction.oncomplete = () => {
+        const saved: AuditLibrary | undefined = library.result;
+        resolve(saved ?? createLibrary(legacy.result as Audit | undefined));
+      };
+      store.transaction.onerror = () => reject(store.transaction.error);
+      store.transaction.onabort = () => reject(store.transaction.error);
     });
   } finally {
     database.close();
   }
 }
 
-export async function saveAudit(audit: Audit) {
+async function writeLibrary(library: AuditLibrary) {
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction("audit", "readwrite");
-      transaction.objectStore("audit").put(audit, "current");
+      const store = transaction.objectStore("audit");
+      store.put(library, "library");
+      store.delete("current");
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error);
@@ -35,6 +43,14 @@ export async function saveAudit(audit: Audit) {
   } finally {
     database.close();
   }
+}
+
+let pendingWrite = Promise.resolve();
+
+export function saveAuditLibrary(library: AuditLibrary) {
+  const result = pendingWrite.then(() => writeLibrary(library));
+  pendingWrite = result.catch(() => undefined);
+  return result;
 }
 
 export async function preparePhoto(file: File) {

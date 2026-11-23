@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowDownToLine, ArrowRight, Camera, Check, ChevronRight, ClipboardList, Cloud, Image, MapPin, Plus, Route, ShieldCheck, Sparkles, WifiOff, X } from "lucide-react";
-import { approvedPayload, categories, conditions, newAudit, sampleAudit, sampleBrief, seed, stationName, stations, type Audit, type Brief, type Finding, type StationId } from "./data";
+import { ArrowDownToLine, ArrowRight, Camera, Check, ChevronRight, ClipboardList, Cloud, FolderOpen, Image, MapPin, Plus, Route, ShieldCheck, Sparkles, Trash2, WifiOff, X } from "lucide-react";
+import { approvedPayload, categories, conditions, createLibrary, findingReference, newAudit, sampleAudit, sampleBrief, seed, stationName, stations, type Audit, type Brief, type Finding, type StationId } from "./data";
 import { cloudConfigured, deviceConfigured, generateBrief, inspectPhoto } from "./inference";
-import { preparePhoto, readAudit, saveAudit } from "./storage";
+import { preparePhoto, readAuditLibrary, saveAuditLibrary } from "./storage";
 import { Wordmark } from "./Landing";
 import { appPath } from "./paths";
-
-const photoPath = (photo: string) => photo.startsWith("data:") ? photo : appPath(photo);
+import { AuditReport, photoPath } from "./AuditReport";
 
 const emptyDraft = (station: StationId, photo = ""): Finding => ({
   id: crypto.randomUUID(), station, photo, category: "Other", condition: "Needs verification", note: "", check: "", measurement: null, origin: "Manual",
@@ -26,26 +25,34 @@ function Modal({ title, children, onClose }: { title: string; children: ReactNod
 }
 
 export function Workspace() {
-  const [audit, setAudit] = useState<Audit>(sampleAudit);
+  const [library, setLibrary] = useState(createLibrary);
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<StationId>("entrance");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Finding | null>(null);
   const [handoff, setHandoff] = useState(false);
-  const [reset, setReset] = useState<"sample" | "blank" | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [removeAuditId, setRemoveAuditId] = useState<string | null>(null);
+  const [confirmRemoveFinding, setConfirmRemoveFinding] = useState(false);
+  const [includePhotos, setIncludePhotos] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [photoBusy, setPhotoBusy] = useState("");
   const [briefBusy, setBriefBusy] = useState("");
   const [message, setMessage] = useState("");
   const [storageError, setStorageError] = useState("");
   const upload = useRef<HTMLInputElement>(null);
+  const audit = library.entries.find((entry) => entry.id === library.activeId)!.audit;
   const finding = audit.findings.find((item) => item.id === selectedId && item.station === selected)
     ?? audit.findings.find((item) => item.station === selected);
+  const canReplaySample = audit.findings.length === seed.length && seed.every((source) => audit.findings.some((item) =>
+    item.id === source.id && item.category === source.category && item.condition === source.condition
+    && item.station === source.station && item.measurement === source.measurement
+  ));
 
   useEffect(() => {
     let active = true;
-    readAudit().then((saved) => {
-      if (active && saved) setAudit(saved);
+    readAuditLibrary().then((saved) => {
+      if (active) setLibrary(saved);
     }).catch(() => {
       if (active) setStorageError("Browser storage is unavailable. Export before leaving this page.");
     }).finally(() => {
@@ -62,19 +69,31 @@ export function Workspace() {
   }, []);
 
   useEffect(() => {
-    if (loaded) void saveAudit(audit)
+    if (loaded) void saveAuditLibrary(library)
       .then(() => setStorageError(""))
       .catch(() => setStorageError("Changes could not be saved on this device. Export before leaving this page."));
-  }, [audit, loaded]);
+  }, [library, loaded]);
+
+  function setAudit(update: (current: Audit) => Audit) {
+    const activeId = library.activeId;
+    setLibrary((current) => ({
+      ...current,
+      entries: current.entries.map((entry) => entry.id === activeId ? { ...entry, audit: update(entry.audit) } : entry),
+    }));
+  }
 
   function openDraft(value: Finding) {
     setMessage("");
+    setConfirmRemoveFinding(false);
     setDraft(value);
   }
 
   function saveFinding(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft?.note.trim()) return;
+    if (!draft?.note.trim()) {
+      setMessage("Enter an observation before saving.");
+      return;
+    }
     const updated = { ...draft, note: draft.note.trim(), check: draft.check.trim() };
     setAudit((current) => ({
       ...current,
@@ -87,6 +106,14 @@ export function Workspace() {
     setSelectedId(updated.id);
     setDraft(null);
     setMessage("Finding saved on this device.");
+  }
+
+  function removeFinding() {
+    if (!draft) return;
+    setAudit((current) => ({ ...current, findings: current.findings.filter((item) => item.id !== draft.id), brief: null }));
+    setDraft(null);
+    setSelectedId(null);
+    setMessage("Finding removed from this audit.");
   }
 
   async function usePhoto(file: File) {
@@ -142,12 +169,49 @@ export function Workspace() {
     setAudit((current) => ({ ...current, brief }));
   }
 
-  function replaceAudit() {
-    setAudit(reset === "sample" ? sampleAudit : newAudit());
+  function resetWorkspace() {
     setSelected("entrance");
     setSelectedId(null);
-    setReset(null);
+    setLibraryOpen(false);
+    setRemoveAuditId(null);
     setMessage("");
+  }
+
+  function openAudit(id: string) {
+    setLibrary((current) => ({ ...current, activeId: id }));
+    resetWorkspace();
+  }
+
+  function addAudit(value: Audit) {
+    const id = crypto.randomUUID();
+    setLibrary((current) => ({ activeId: id, entries: [...current.entries, { id, audit: value }] }));
+    resetWorkspace();
+  }
+
+  function removeAudit(id: string) {
+    setLibrary((current) => {
+      const entries = current.entries.filter((entry) => entry.id !== id);
+      if (!entries.length) return createLibrary();
+      return { entries, activeId: current.activeId === id ? entries[0].id : current.activeId };
+    });
+    resetWorkspace();
+    setMessage("Audit removed from this device.");
+  }
+
+  function showEvidence(id: string) {
+    const source = audit.findings.find((item) => item.id === id);
+    if (!source) return;
+    setHandoff(false);
+    setSelected(source.station);
+    setSelectedId(source.id);
+    setMessage("");
+    requestAnimationFrame(() => document.getElementById("evidence-panel")?.focus());
+  }
+
+  async function printReport() {
+    const images = document.querySelectorAll<HTMLImageElement>(".print-report img");
+    await Promise.allSettled(Array.from(images, (image) => image.decode()));
+    window.print();
   }
 
   if (!loaded) return <main className="loading">Opening the workspace…</main>;
@@ -156,7 +220,7 @@ export function Workspace() {
     <a className="skip" href="#audit">Skip to audit</a>
     <header className="workspace-header"><Wordmark light /><span className="workspace-label"><Route size={17} /> Field audit</span>
       <div className="workspace-actions"><span className="status">{online ? <ShieldCheck size={16} /> : <WifiOff size={16} />}{online ? "Local workspace" : "Offline"}</span>
-        <button className="button lime" onClick={() => { setMessage(""); setHandoff(true); }} disabled={!audit.findings.length}><ClipboardList size={17} /> Build handoff</button>
+        <button className="button lime" onClick={() => { setMessage(""); setIncludePhotos(false); setHandoff(true); }} disabled={!audit.findings.length}><ClipboardList size={17} /> Build handoff</button>
       </div>
     </header>
     <main id="audit" className="workspace">
@@ -164,11 +228,11 @@ export function Workspace() {
         <h1>{audit.title}</h1>
         <p>{audit.sample ? "Sample audit · Fictional venue" : "Private audit · Saved on this device"}</p>
       </div><div className="title-actions">
-        {!audit.sample && <button className="button outline" onClick={() => setReset("sample")}>Load sample</button>}
-        <button className="button outline" onClick={() => setReset("blank")}><Plus size={17} /> New audit</button>
+        <button className="button outline" onClick={() => { setRemoveAuditId(null); setLibraryOpen(true); }}><FolderOpen size={17} /> My audits</button>
+        <button className="button outline" onClick={() => addAudit(newAudit())}><Plus size={17} /> New audit</button>
         <button className="button dark" onClick={() => openDraft(emptyDraft(selected))}><Camera size={17} /> Add finding</button>
       </div></div>
-      {!audit.sample && <label className="venue-name">Venue name<input maxLength={80} value={audit.title} onChange={(event) => setAudit({ ...audit, title: event.target.value })} onBlur={() => { if (!audit.title.trim()) setAudit({ ...audit, title: "Untitled venue" }); }} /></label>}
+      {!audit.sample && <label className="venue-name">Venue name<input maxLength={80} value={audit.title} onChange={({ target }) => { const title = target.value; setAudit((current) => ({ ...current, title })); }} onBlur={() => { if (!audit.title.trim()) setAudit((current) => ({ ...current, title: "Untitled venue" })); }} /></label>}
       {storageError && <p className="notice" role="alert">{storageError}</p>}
       {message && !draft && !handoff && <p className="notice" role="status">{message}</p>}
       <div className="audit-grid">
@@ -183,13 +247,13 @@ export function Workspace() {
             <span className="map-caption">{audit.sample ? "Fictional site plan · Not to scale" : "Route template · Not to scale"}</span>
           </div>
         </section>
-        <section className="panel evidence-panel" aria-label="Evidence">
+        <section className="panel evidence-panel" id="evidence-panel" aria-label="Evidence" tabIndex={-1}>
           <div className="panel-heading"><Image /><div><h2>Evidence</h2><p>Photos and reviewed observations.</p></div></div>
           {finding?.photo ? <img className="evidence-photo" src={photoPath(finding.photo)} alt={`Evidence at ${stationName(selected)}`} />
             : <div className="empty-photo"><Camera /><span>No photo for this finding</span></div>}
           <div className="evidence-info"><h3><MapPin size={18} /> {stationName(selected)}</h3>
             {finding ? <>
-              <div className="evidence-meta"><strong>{finding.category}</strong><span className="tag">{finding.origin}</span></div>
+              <div className="evidence-meta"><strong>{finding.category}</strong><span className="tag">{finding.origin}</span><span className="finding-reference">{findingReference(finding.id)}</span></div>
               <p>{finding.note}</p>
               <button className="text-button" onClick={() => openDraft(finding)}>Review finding <ArrowRight size={16} /></button>
             </> : <button className="text-button" onClick={() => openDraft(emptyDraft(selected))}>Add a finding <ArrowRight size={16} /></button>}
@@ -233,7 +297,14 @@ export function Workspace() {
           </div>
           <label>Observation<textarea required maxLength={240} value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} /></label>
           <label>What should someone verify?<textarea maxLength={240} value={draft.check} onChange={(event) => setDraft({ ...draft, check: event.target.value })} /></label>
-          <button className="button lime" type="submit"><Check size={18} /> Save reviewed finding</button>
+          <div className="dialog-actions">
+            <button className="button lime" type="submit"><Check size={18} /> Save reviewed finding</button>
+            {audit.findings.some((item) => item.id === draft.id) && !confirmRemoveFinding && <button className="button outline" type="button" onClick={() => setConfirmRemoveFinding(true)}><Trash2 size={16} /> Remove finding</button>}
+          </div>
+          {confirmRemoveFinding && <div className="notice">
+            <p>Remove this finding and its photo from the audit? This also clears any draft handoff.</p>
+            <div className="dialog-actions"><button className="button outline" type="button" onClick={() => setConfirmRemoveFinding(false)}>Keep finding</button><button className="button dark" type="button" onClick={removeFinding}>Confirm removal</button></div>
+          </div>}
         </fieldset>
       </form>
     </Modal>}
@@ -244,37 +315,54 @@ export function Workspace() {
         <div className="dialog-actions">
           <button className="button dark" onClick={() => void buildBrief(true)} disabled={(!cloudConfigured && !deviceConfigured) || !!briefBusy}><Sparkles size={17} /> {cloudConfigured ? "Quick hybrid brief" : "Generate on device"}</button>
           {cloudConfigured && <button className="button lime" onClick={() => void buildBrief(false)} disabled={!!briefBusy || !online}><Cloud size={17} /> Generate cloud brief</button>}
-          {audit.sample && <button className="button outline" disabled={!!briefBusy || !seed.every((source) => audit.findings.some((item) => item.id === source.id && item.category === source.category && item.condition === source.condition && item.station === source.station))} onClick={() => setBrief(sampleBrief)}>Open sample replay</button>}
+          {audit.sample && <button className="button outline" disabled={!!briefBusy || !canReplaySample} onClick={() => setBrief(sampleBrief)}>Open sample replay</button>}
         </div>
         {!cloudConfigured && <p className="helper">In supported desktop Chrome, Gemini Nano drafts the brief on this device. Sample replay and printing work on other browsers.</p>}
         {briefBusy && <p className="notice" role="status">{briefBusy}</p>}
         {message && <p className="notice" role="status">{message}</p>}
       </section>
-      {audit.brief && <BriefEditor brief={audit.brief} onChange={setBrief} />}
-      <button className="button outline no-print" onClick={() => window.print()}><ArrowDownToLine size={17} /> {audit.brief ? "Print or save brief as PDF" : "Print findings report"}</button>
+      {audit.brief && <BriefEditor brief={audit.brief} onChange={setBrief} onFinding={showEvidence} />}
+      <div className="export-controls">
+        <p className="helper">The exported copy includes your reviewed observation and verification notes.</p>
+        {audit.findings.some((item) => item.photo) && <label className="check-label"><input type="checkbox" checked={includePhotos} onChange={(event) => setIncludePhotos(event.target.checked)} /> Include evidence photos in the exported copy</label>}
+        <button className="button outline" onClick={() => void printReport()} disabled={!!briefBusy}><ArrowDownToLine size={17} /> {audit.brief ? "Print or save brief as PDF" : "Print findings report"}</button>
+      </div>
     </Modal>}
-    {reset && <Modal title={reset === "sample" ? "Load the sample audit?" : "Start a new audit?"} onClose={() => setReset(null)}>
-      <p>This replaces the current audit on this device. Export it first if you want a copy.</p>
-      <div className="dialog-actions"><button className="button outline" onClick={() => setReset(null)}>Keep current audit</button><button className="button dark" onClick={replaceAudit}>Replace audit</button></div>
+    {libraryOpen && <Modal title="My audits" onClose={() => setLibraryOpen(false)}>
+      <p className="helper">Audits are saved in this browser. Export a PDF to share one.</p>
+      <ul className="audit-library">
+        {library.entries.map(({ id, audit: saved }) => <li key={id}>
+          <div className="library-row">
+            <button className="library-open" onClick={() => openAudit(id)}>
+              <strong>{saved.title || "Untitled venue"}</strong>
+              <span>{saved.findings.length} {saved.findings.length === 1 ? "finding" : "findings"}{saved.sample ? " · Sample" : ""}{id === library.activeId ? " · Current audit" : ""}</span>
+            </button>
+            <button className="icon-button" aria-label={`Remove ${saved.title || "untitled audit"}`} onClick={() => setRemoveAuditId(id)}><Trash2 size={17} /></button>
+          </div>
+          {removeAuditId === id && <div className="notice"><p>Remove this audit and its evidence from this browser?</p><div className="dialog-actions">
+            <button className="button outline" onClick={() => setRemoveAuditId(null)}>Keep audit</button>
+            <button className="button dark" onClick={() => removeAudit(id)}>Confirm removal</button>
+          </div></div>}
+        </li>)}
+      </ul>
+      <div className="dialog-actions">
+        <button className="button dark" onClick={() => addAudit(newAudit())}><Plus size={17} /> New audit</button>
+        <button className="button outline" onClick={() => addAudit(sampleAudit)}>Add a fresh sample</button>
+      </div>
     </Modal>}
-    <article className="print-report">
-      <h1>{audit.title}</h1><p>{audit.sample ? "Fictional sample audit" : "Accessibility observations"}</p>
-      {audit.brief && <><h2>{audit.brief.title}</h2><p>{audit.brief.summary}</p>{audit.brief.actions.map((action) => <section key={action.findingId}><h3>{action.priority} · {action.findingId}</h3><p>{action.action}</p><p>Verify: {action.verify}</p></section>)}</>}
-      <h2>Reviewed findings</h2>
-      {audit.findings.map((item) => <section key={item.id}><h3>{stationName(item.station)} · {item.category}</h3><p>{item.id} · {item.condition}{item.measurement !== null && ` · ${item.measurement} cm`}</p><p>{item.note}</p>{item.check && <p>Verify: {item.check}</p>}</section>)}
-      <p>Waypin · Observations for facilities review</p>
-    </article>
+    <AuditReport audit={audit} includePhotos={includePhotos} />
   </>;
 }
 
-function BriefEditor({ brief, onChange }: { brief: Brief; onChange: (brief: Brief) => void }) {
+function BriefEditor({ brief, onChange, onFinding }: { brief: Brief; onChange: (brief: Brief) => void; onFinding: (id: string) => void }) {
   return <section className="brief-editor">
     <span className="tag">{brief.origin === "Sample" ? "Sample replay" : `Gemini · ${brief.origin}`}</span>
     <label>Brief title<input maxLength={110} value={brief.title} onChange={(event) => onChange({ ...brief, title: event.target.value })} /></label>
     <label>Summary<textarea maxLength={420} value={brief.summary} onChange={(event) => onChange({ ...brief, summary: event.target.value })} /></label>
-    {brief.actions.map((action) => <fieldset key={action.findingId}><legend>{action.priority} · {action.findingId}</legend>
+    {brief.actions.map((action) => <fieldset key={action.findingId}><legend>{action.priority} · {findingReference(action.findingId)}</legend>
       <label>Action<textarea maxLength={260} value={action.action} onChange={(event) => onChange({ ...brief, actions: brief.actions.map((item) => item.findingId === action.findingId ? { ...item, action: event.target.value } : item) })} /></label>
       <label>Verification<textarea maxLength={260} value={action.verify} onChange={(event) => onChange({ ...brief, actions: brief.actions.map((item) => item.findingId === action.findingId ? { ...item, verify: event.target.value } : item) })} /></label>
+      <button className="text-button" onClick={() => onFinding(action.findingId)}>View evidence <ArrowRight size={16} /></button>
     </fieldset>)}
   </section>;
 }
