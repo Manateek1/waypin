@@ -16,7 +16,8 @@ const cacheName = ${JSON.stringify(name)};
 const scope = new URL(self.registration.scope).pathname;
 const files = ${JSON.stringify(files)}.map((path) => scope + path.slice(1));
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(files)).then(() => self.skipWaiting()));
+  // Keep open pages on their current version until they have all closed.
+  event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(files)));
 });
 self.addEventListener("activate", (event) => {
   event.waitUntil(caches.keys().then((names) => Promise.all(names.filter((name) => name.startsWith("waypin-") && name !== cacheName).map((name) => caches.delete(name)))).then(() => self.clients.claim()));
