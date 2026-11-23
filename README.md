@@ -1,8 +1,14 @@
-# Waypin
+# Toybox and Waypin
+
+Toybox is the home screen. Choose Classical, Rock, or Orchestra, press **Play**, and tap a toy to hear its instrument. Edit the note grid and mixer directly, or ask Gemini for changes like “slow it down and make the drums softer.” The editable two-bar arrangement is saved in this browser. Browsers synthesize the audio from notes with Web Audio. Gemini returns arrangement edits as structured JSON using Firebase AI Logic when connected, with Chrome Nano available on supported devices when offline.
+
+[Open Toybox](https://manateek1.github.io/waypin/studio/)
+
+## Waypin field audit
 
 Waypin helps community venue volunteers document accessibility barriers in the field and turn reviewed findings into a traceable facilities handoff.
 
-[Open the sample demo](https://manateek1.github.io/waypin/)
+[Open the audit demo](https://manateek1.github.io/waypin/audit/)
 
 The public demo uses a fictional venue and generated photos. On compatible desktop Chrome, Waypin calls the browser’s built-in Gemini Nano for live photo observations and quick briefs. It works with an initial model download and then can run offline. Other browsers can use manual review, reports, and the labeled sample replay. A separate Firebase configuration enables the cloud modes.
 

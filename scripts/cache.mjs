@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 
-await mkdir("dist/audit", { recursive: true });
-await copyFile("dist/index.html", "dist/audit/index.html");
+for (const route of ["audit", "field-guide", "studio"]) {
+  await mkdir("dist/" + route, { recursive: true });
+  await copyFile("dist/index.html", "dist/" + route + "/index.html");
+}
 
 const files = (await readdir("dist", { recursive: true, withFileTypes: true }))
   .filter((entry) => entry.isFile() && entry.name !== "sw.js")
@@ -26,7 +28,7 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== location.origin) return;
-  if (request.mode === "navigate" && [scope, scope + "audit", scope + "audit/"].includes(url.pathname)) {
+  if (request.mode === "navigate" && !url.search && ["", "audit", "audit/", "field-guide", "field-guide/", "studio", "studio/"].some((route) => url.pathname === scope + route)) {
     event.respondWith(caches.open(cacheName).then((cache) => cache.match(scope + "index.html")).then((cached) => cached || fetch(request)));
   } else if (files.includes(url.pathname)) {
     event.respondWith(caches.open(cacheName).then((cache) => cache.match(request)).then((cached) => cached || fetch(request)));
