@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 
-for (const route of ["audit", "field-guide", "studio"]) {
+const pages = {
+  audit: "Waypin — Field audit",
+  "field-guide": "Waypin — Field guide",
+  studio: "Toybox — Song Studio",
+};
+const shell = await readFile("dist/index.html", "utf8");
+for (const [route, title] of Object.entries(pages)) {
   await mkdir("dist/" + route, { recursive: true });
-  await copyFile("dist/index.html", "dist/" + route + "/index.html");
+  await writeFile("dist/" + route + "/index.html", shell.replace(/<title>.*?<\/title>/, "<title>" + title + "</title>"));
 }
 
 const files = (await readdir("dist", { recursive: true, withFileTypes: true }))
@@ -17,9 +23,17 @@ await writeFile("dist/sw.js", `
 const cacheName = ${JSON.stringify(name)};
 const scope = new URL(self.registration.scope).pathname;
 const files = ${JSON.stringify(files)}.map((path) => scope + path.slice(1));
+const routes = new Map(${JSON.stringify(["", ...Object.keys(pages)])}.flatMap((route) => {
+  const directory = route ? route + "/" : "";
+  const page = scope + directory + "index.html";
+  return [[scope + route, page], [scope + directory, page], [page, page]];
+}));
 self.addEventListener("install", (event) => {
-  // Keep open pages on their current version until they have all closed.
-  event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(files)));
+  event.waitUntil((async () => {
+    const cache = await caches.open(cacheName);
+    await cache.addAll(files.map((file) => new Request(new URL(file, self.registration.scope), { cache: "reload" })));
+    await self.skipWaiting();
+  })());
 });
 self.addEventListener("activate", (event) => {
   event.waitUntil(caches.keys().then((names) => Promise.all(names.filter((name) => name.startsWith("waypin-") && name !== cacheName).map((name) => caches.delete(name)))).then(() => self.clients.claim()));
@@ -28,8 +42,17 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== location.origin) return;
-  if (request.mode === "navigate" && !url.search && ["", "audit", "audit/", "field-guide", "field-guide/", "studio", "studio/"].some((route) => url.pathname === scope + route)) {
-    event.respondWith(caches.open(cacheName).then((cache) => cache.match(scope + "index.html")).then((cached) => cached || fetch(request)));
+  const page = routes.get(url.pathname);
+  if (request.mode === "navigate" && page) {
+    event.respondWith((async () => {
+      let response;
+      try {
+        response = await fetch(request, { cache: "reload" });
+        if (response.ok) return response;
+      } catch { /* Use the complete cached release while offline. */ }
+      const cache = await caches.open(cacheName);
+      return (await cache.match(page)) ?? response ?? Response.error();
+    })());
   } else if (files.includes(url.pathname)) {
     event.respondWith(caches.open(cacheName).then((cache) => cache.match(request)).then((cached) => cached || fetch(request)));
   }

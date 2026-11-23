@@ -79,6 +79,7 @@ export class ToyBand {
   private timer?: number;
   private displays = new Set<number>();
   private active = false;
+  private playback = 0;
 
   private getContext() {
     const context = this.context ??= new AudioContext();
@@ -88,8 +89,15 @@ export class ToyBand {
 
   async play(read: () => PlayerState, onStep: (position: Position | null) => void, firstSection = 0) {
     this.stop();
+    const playback = this.playback;
     const ctx = this.getContext();
-    await ctx.resume();
+    try {
+      await ctx.resume();
+    } catch (error) {
+      if (playback !== this.playback) return false;
+      throw error;
+    }
+    if (playback !== this.playback) return false;
     const bus = ctx.createGain();
     const limiter = ctx.createDynamicsCompressor();
     bus.connect(limiter).connect(ctx.destination);
@@ -134,6 +142,7 @@ export class ToyBand {
     };
     this.timer = window.setInterval(schedule, 25);
     schedule();
+    return true;
   }
 
   updateMix(mix: Mix, master: number) {
@@ -144,6 +153,7 @@ export class ToyBand {
   }
 
   stop() {
+    this.playback++;
     this.active = false;
     window.clearInterval(this.timer);
     this.timer = undefined;
