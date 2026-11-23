@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compileSong, durationBars, genres, parsePlan, preset, trackIds, validNote } from "../src/music/score.ts";
+import { compileSong, durationBars, genres, jazzShellNote, parsePlan, preset, trackIds, validNote } from "../src/music/score.ts";
 
 const phrases = [
   "1---3000 5---2000 3--4-500 2---1000",
@@ -51,4 +51,18 @@ test("every preset voices a full song without producing invalid grid notes", () 
     const outro = song.sections.at(-1);
     assert.ok(outro.tracks[outro.lead][(outro.bars - 1) * 8]);
   }
+});
+
+test("rock backbeat and jazz walking bass use different rhythmic parts", () => {
+  const rock = preset("Rock").sections[2].tracks;
+  const jazz = preset("Jazz").sections[2].tracks;
+  assert.equal(rock.drums[2], 38);
+  assert.equal(rock.drums[6], 38);
+  assert.deepEqual(jazz.drums.slice(0, 8), [36, 0, 42, 42, 42, 0, 42, 42]);
+  assert.deepEqual(rock.bass.slice(0, 8).filter(Boolean), Array(4).fill(rock.bass[0]));
+  assert.equal(new Set(jazz.bass.slice(0, 8).filter(Boolean)).size, 4);
+  assert.equal(jazz.keys[2], 0);
+  assert.ok(jazz.keys[3]);
+  assert.equal(jazzShellNote(53, "C major"), 60); // Dm7: F and C.
+  assert.equal(jazzShellNote(59, "C major"), 65); // G7: B and F.
 });

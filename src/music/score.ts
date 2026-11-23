@@ -61,6 +61,15 @@ export function preset(genre: Genre) {
 const tonics: Record<SongPlan["key"], number> = { "C major": 60, "D major": 62, "G major": 55, "A minor": 57, "E minor": 64, "D minor": 62 };
 const scales = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10] };
 const progressions = { bridge: [5, 3, 6, 4], verse: [0, 5, 3, 4], chorus: [0, 4, 5, 3] };
+const jazzCadence = [1, 4, 0, 5];
+const jazzComp = [[-1, -1, -1, 2, -1, -1, 2, -1], [-1, 2, -1, -1, -1, 2, -1, -1]];
+
+export function jazzShellNote(third: number, key: SongPlan["key"]) {
+  const scale = key.includes("minor") ? scales.minor : scales.major;
+  const degree = scale.indexOf((third - tonics[key] + 120) % 12);
+  if (degree < 0) return third + 7;
+  return third + scale[(degree + 4) % 7] - scale[degree] + (degree + 4 >= 7 ? 12 : 0);
+}
 const phrases: Record<SectionPlan["name"], string> = {
   Intro: "1---30005---20003--4-5002---1000",
   Verse: "10-305003-40200020-450005--30200",
@@ -83,8 +92,10 @@ function arrangeSection(plan: SongPlan, section: SectionPlan, index: number): Se
   const scale = plan.key.includes("minor") ? scales.minor : scales.major;
   const tonic = tonics[plan.key];
   const profile = genreProfiles[plan.genre];
+  const jazz = plan.genre === "Jazz";
+  const rock = plan.genre === "Rock";
   const progression = section.harmony ? Array.from(section.harmony, (degree) => Number(degree) - 1)
-    : section.name === "Bridge" ? progressions.bridge : section.name === "Chorus" ? progressions.chorus : progressions.verse;
+    : jazz ? jazzCadence : section.name === "Bridge" ? progressions.bridge : section.name === "Chorus" ? progressions.chorus : progressions.verse;
   const phrase = section.phrase ?? (section.name === "Verse"
     ? plan.hook.join("") + phrases.Verse.slice(16) : phrases[section.name]);
   const pitches = (degree: number, octave = 0) => tonic + scale[(degree % 7 + 7) % 7] + 12 * (Math.floor(degree / 7) + octave);
@@ -103,6 +114,11 @@ function arrangeSection(plan: SongPlan, section: SectionPlan, index: number): Se
     const closing = section.name === "Outro" && bar === section.bars - 1;
     const cadence = bar === section.bars - 1 || section.name === "Outro" && bar === section.bars - 2;
     const root = closing ? 0 : section.name === "Outro" && cadence ? 4 : progression[bar % 4];
+    const nextRoot = section.name === "Outro" && bar >= section.bars - 2 ? 0 : progression[(bar + 1) % 4];
+    const bassRoot = pitches(root, -2);
+    const arrival = pitches(nextRoot, -2);
+    const approach = arrival + (arrival > bassRoot ? -1 : 1);
+    const comp = jazz && !closing ? jazzComp[bar % jazzComp.length] : pianoVoicing;
     const indexOf = (step: number) => bar * STEPS_PER_BAR + step;
     const fill = bar % 4 === 3 && !closing;
     for (let step = 0; step < STEPS_PER_BAR; step++) {
@@ -117,18 +133,27 @@ function arrangeSection(plan: SongPlan, section: SectionPlan, index: number): Se
           Math.abs(next - degree) < Math.abs(closest - degree) ? next : closest) : degree;
         tracks[lead][position] = inRegister(pitches(voiced, swell && voiced <= 4 ? 1 : 0), lead);
       }
-      if (lead !== "keys" && allowed("keys") && pianoVoicing[step] >= 0 && !(closing && step)) tracks.keys[position] = pitches(root + pianoVoicing[step], -1);
+      if (lead !== "keys" && allowed("keys") && comp[step] >= 0 && !(closing && step)) tracks.keys[position] = pitches(root + comp[step], -1);
       if (lead !== "guitar" && allowed("guitar") && guitarVoicing[step] >= 0 && (ensemble || section.energy >= 3) && !(closing && step)) {
         tracks.guitar[position] = pitches(root + guitarVoicing[step], -1);
       }
-      if (lead !== "bass" && allowed("bass") && (step === 0 || !closing && (step === 4 && section.energy > 1 || bright && step === 6 && section.energy > 3))) {
-        tracks.bass[position] = pitches(root + (step === 6 ? 4 : 0), -2);
+      if (lead !== "bass" && allowed("bass")) {
+        if (jazz && !closing && step % 2 === 0) {
+          tracks.bass[position] = step === 6 ? approach : pitches(root + step, -2);
+        } else if (!jazz && !closing && rock && step % 2 === 0) {
+          tracks.bass[position] = pitches(root + (step === 6 && fill ? 4 : 0), -2);
+        } else if (step === 0 || !closing && (step === 4 && section.energy > 1 || bright && step === 6 && section.energy > 3)) {
+          tracks.bass[position] = pitches(root + (step === 6 ? 4 : 0), -2);
+        }
       }
       if (!closing && allowed("drums") && (ensemble || section.energy >= 4 || !acoustic && section.energy >= 3 || bright && section.energy >= 2)) {
-        tracks.drums[position] = acoustic ? step === 0 || step === 4 && swell ? 36 : fill && step === 6 ? 42 : 0
+        tracks.drums[position] = jazz ? (step === 2 || step === 3 || step === 4 || step === 6 || step === 7 ? 42
+          : step === 0 ? 36 : step === 5 && fill ? 38 : 0)
+          : rock ? (step === 2 || step === 6 ? 38 : step === 0 || step === 4 || step === 5 && fill ? 36 : 42)
+          : acoustic ? step === 0 || step === 4 && swell ? 36 : fill && step === 6 ? 42 : 0
           : step === 0 || step === 4 ? 36 : step === 2 || step === 6 || fill && step === 7 ? 38 : 42;
       }
-      if (allowed(harmonyVoice) && (step === 0 && (acoustic || section.energy >= 4) || step === 5 && acoustic && section.energy >= 3 && !closing)) {
+      if (!jazz && allowed(harmonyVoice) && (step === 0 && (acoustic || section.energy >= 4) || step === 5 && acoustic && section.energy >= 3 && !closing)) {
         tracks[harmonyVoice][position] = inRegister(pitches(root + (step ? 4 : 2)), harmonyVoice);
       }
       for (const [layer, id] of colour.entries()) {
