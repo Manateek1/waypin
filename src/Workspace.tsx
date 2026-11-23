@@ -35,7 +35,7 @@ export function Workspace() {
   const [reset, setReset] = useState<"sample" | "blank" | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [photoBusy, setPhotoBusy] = useState("");
-  const [briefBusy, setBriefBusy] = useState(false);
+  const [briefBusy, setBriefBusy] = useState("");
   const [message, setMessage] = useState("");
   const [storageError, setStorageError] = useState("");
   const upload = useRef<HTMLInputElement>(null);
@@ -122,15 +122,19 @@ export function Workspace() {
   }
 
   async function buildBrief(quick: boolean) {
-    setBriefBusy(true);
+    setBriefBusy("Generating your brief…");
     setMessage("");
     try {
-      const brief = await generateBrief(audit.findings, quick);
+      const brief = await generateBrief(audit.findings, quick, (percent) => {
+        setBriefBusy(percent < 100 ? `Downloading Nano · ${percent}%` : "Generating on this device…");
+      });
       setAudit((current) => ({ ...current, brief }));
-    } catch {
-      setMessage("The brief could not be generated. Check your connection and App Check setup, or print the findings report.");
+    } catch (error) {
+      setMessage(quick && !cloudConfigured
+        ? `Device brief unavailable. You can still print the findings report. ${error instanceof Error ? error.message : ""}`
+        : "The brief could not be generated. Check your connection and App Check setup, or print the findings report.");
     } finally {
-      setBriefBusy(false);
+      setBriefBusy("");
     }
   }
 
@@ -218,7 +222,7 @@ export function Workspace() {
           {!draft.photo && audit.sample && <button type="button" className="button outline" disabled={!!photoBusy} onClick={() => setDraft({ ...draft, photo: seed.find((item) => item.station === draft.station)!.photo })}>Use sample photo</button>}
         </div>
         {photoBusy && <p className="notice" role="status">{photoBusy}</p>}
-        {!deviceConfigured && draft.photo && <p className="helper">Live Firebase AI isn’t configured in this build. You can review this photo manually.</p>}
+        {!deviceConfigured && draft.photo && <p className="helper">Open Waypin in a supported desktop Chrome browser to use Gemini Nano. You can review this photo manually here.</p>}
         {message && <p className="notice" role="status">{message}</p>}
         <fieldset disabled={!!photoBusy}>
           <div className="fields">
@@ -238,12 +242,12 @@ export function Workspace() {
         <p>Review what AI can receive. Photos and private notes stay on this device.</p>
         <details><summary>Preview the exact findings payload</summary><pre>{JSON.stringify(approvedPayload(audit.findings), null, 2)}</pre></details>
         <div className="dialog-actions">
-          <button className="button dark" onClick={() => void buildBrief(true)} disabled={!cloudConfigured || briefBusy}><Sparkles size={17} /> Quick hybrid brief</button>
-          <button className="button lime" onClick={() => void buildBrief(false)} disabled={!cloudConfigured || briefBusy || !online}><Cloud size={17} /> Generate cloud brief</button>
-          {audit.sample && <button className="button outline" disabled={briefBusy || !seed.every((source) => audit.findings.some((item) => item.id === source.id && item.category === source.category && item.condition === source.condition && item.station === source.station))} onClick={() => setBrief(sampleBrief)}>Open sample replay</button>}
+          <button className="button dark" onClick={() => void buildBrief(true)} disabled={(!cloudConfigured && !deviceConfigured) || !!briefBusy}><Sparkles size={17} /> {cloudConfigured ? "Quick hybrid brief" : "Generate on device"}</button>
+          {cloudConfigured && <button className="button lime" onClick={() => void buildBrief(false)} disabled={!!briefBusy || !online}><Cloud size={17} /> Generate cloud brief</button>}
+          {audit.sample && <button className="button outline" disabled={!!briefBusy || !seed.every((source) => audit.findings.some((item) => item.id === source.id && item.category === source.category && item.condition === source.condition && item.station === source.station))} onClick={() => setBrief(sampleBrief)}>Open sample replay</button>}
         </div>
-        {!cloudConfigured && <p className="helper">Live cloud inference requires Firebase App Check. Sample replay and printing are available.</p>}
-        {briefBusy && <p className="notice" role="status">Generating your brief…</p>}
+        {!cloudConfigured && <p className="helper">In supported desktop Chrome, Gemini Nano drafts the brief on this device. Sample replay and printing work on other browsers.</p>}
+        {briefBusy && <p className="notice" role="status">{briefBusy}</p>}
         {message && <p className="notice" role="status">{message}</p>}
       </section>
       {audit.brief && <BriefEditor brief={audit.brief} onChange={setBrief} />}
@@ -265,7 +269,7 @@ export function Workspace() {
 
 function BriefEditor({ brief, onChange }: { brief: Brief; onChange: (brief: Brief) => void }) {
   return <section className="brief-editor">
-    <span className="tag">{brief.origin === "Sample" ? "Sample replay" : `Firebase · ${brief.origin}`}</span>
+    <span className="tag">{brief.origin === "Sample" ? "Sample replay" : `Gemini · ${brief.origin}`}</span>
     <label>Brief title<input maxLength={110} value={brief.title} onChange={(event) => onChange({ ...brief, title: event.target.value })} /></label>
     <label>Summary<textarea maxLength={420} value={brief.summary} onChange={(event) => onChange({ ...brief, summary: event.target.value })} /></label>
     {brief.actions.map((action) => <fieldset key={action.findingId}><legend>{action.priority} · {action.findingId}</legend>
