@@ -40,6 +40,8 @@ npm run preview
 
 [Firebase web hybrid inference setup](https://firebase.google.com/docs/ai-logic/hybrid/web/get-started) · [App Check setup](https://firebase.google.com/docs/ai-logic/app-check)
 
+For the GitHub Pages deployment, set `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID`, and `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` as repository Actions variables and run the **Build Waypin** workflow. These are public web client identifiers. Register the deployed hostname with the App Check provider. Gemini API keys, service account credentials, and App Check debug tokens belong outside the web build.
+
 ## Judge walkthrough
 
 1. Open the sample audit and select **Main entrance**.
