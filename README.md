@@ -1,8 +1,10 @@
 # Toybox and Waypin
 
-Toybox’s landing page has playable examples for games, videos, and songwriting. In the studio, pick one of eight genres or ask Gemini to write an entire instrumental for ten toy musicians. Play the song across its sections, change the notes, preview individual instruments, and export the complete mix as a WAV. Your arrangement is saved in this browser.
+Toybox’s landing page has playable examples for games, videos, and songwriting. In the studio, pick one of eight genres or ask Gemini to write an entire instrumental for ten toy musicians. Play the song across its sections, change the notes, preview individual instruments, and export the complete mix as an MP3 or WAV. Your arrangement is saved in this browser.
 
-Firebase AI Logic generates a structured melody, section plan, and mixer edits. Toybox expands the plan into editable notes and synthesizes the sound with Web Audio. The cloud uses the Spark tier. Supported desktop Chrome devices can also arrange on-device with Gemini Nano.
+Firebase AI Logic generates a structured melody, section plan, and mixer edits. Toybox expands the plan into editable notes and plays instrument samples with Web Audio. The cloud uses the Spark tier. Supported desktop Chrome devices can also arrange on-device with Gemini Nano.
+
+The [instrument credits](public/sounds/CREDITS.txt) identify the recording libraries and licenses. [LAME](https://lame.sourceforge.io/) powers in-browser MP3 export through [`@breezystack/lamejs` 1.2.7](https://www.npmjs.com/package/@breezystack/lamejs/v/1.2.7), shipped separately from the app in a web worker. See the [encoder notice](public/licenses/MP3-ENCODER.txt) for source and license links.
 
 [Open Toybox](https://manateek1.github.io/waypin/) · [Go directly to the studio](https://manateek1.github.io/waypin/studio/)
 

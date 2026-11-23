@@ -71,6 +71,8 @@ function arrangeSection(plan: SongPlan, section: SectionPlan, index: number): Se
   const bright = ["Rock", "EDM", "Chiptune"].includes(plan.genre);
   const acoustic = ["Classical", "Folk", "Orchestra"].includes(plan.genre);
   const tracks = Object.fromEntries(trackIds.map((id) => [id, Array<number>(section.bars * STEPS_PER_BAR).fill(0)])) as Tracks;
+  const pianoVoicing = acoustic ? [0, -1, 2, -1, 4, -1, 2, -1] : [0, -1, -1, 2, 4, -1, -1, -1];
+  const guitarVoicing = bright ? [0, -1, 4, -1, 0, -1, 4, -1] : [-1, -1, 2, -1, -1, -1, 4, -1];
   for (let bar = 0; bar < section.bars; bar++) {
     const closing = section.name === "Outro" && bar === section.bars - 1;
     const root = closing ? 0 : progression[(bar + (section.name === "Bridge" ? 1 : 0)) % progression.length];
@@ -86,10 +88,12 @@ function arrangeSection(plan: SongPlan, section: SectionPlan, index: number): Se
         const degree = closing ? 0 : accent ? root + ((theme - 1) % 3) * 2 : (theme - 1 + (fill ? 1 : 0)) % 7;
         tracks[lead][position] = pitches(degree, section.name === "Chorus" && index > 2 ? 1 : 0);
       }
-      if (!tracks.keys[position] && (accent || acoustic && step === 2) && !(closing && step)) tracks.keys[position] = pitches(root + (step ? 2 : 0));
-      if (!tracks.guitar[position] && (bright ? step % 2 === 0 : step === 2 || step === 6) && section.energy >= 3) tracks.guitar[position] = pitches(root + (step > 3 ? 4 : 0), -1);
+      if (!tracks.keys[position] && pianoVoicing[step] >= 0 && !(closing && step)) tracks.keys[position] = pitches(root + pianoVoicing[step]);
+      if (!tracks.guitar[position] && guitarVoicing[step] >= 0 && section.energy >= 3 && !(closing && step)) {
+        tracks.guitar[position] = pitches(root + guitarVoicing[step], -1);
+      }
       if (!tracks.bass[position] && (step === 0 || step === 4 && section.energy > 1 || bright && step === 6 && section.energy > 3)) tracks.bass[position] = pitches(root + (step === 6 ? 4 : 0), -2);
-      if (section.energy >= 3 || bright && section.energy >= 2) {
+      if (!closing && (section.energy >= 4 || !acoustic && section.energy >= 3 || bright && section.energy >= 2)) {
         tracks.drums[position] = step === 0 || step === 4 ? 36 : step === 2 || step === 6 || fill && step === 7 ? 38 : 42;
       }
       for (const [layer, id] of profile.colour.entries()) {

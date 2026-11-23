@@ -35,6 +35,7 @@ export async function arrange(song: Song, mix: Mix, request: string, mode: "edit
     "Use 4–8 sections totaling no more than 72 bars. Each section has an even length between 2 and 16 bars.",
     "A new song usually has around 32–48 bars. Give it an opening, a main idea, a contrast and a real ending.",
     "The hook is exactly 16 integers. 0 means rest; 1 through 7 indicate degrees of the key's scale. Energy is from 1 to 5.",
+    "Make the hook singable: use a short rhythmic figure, repeat it with one variation, and give it room to breathe with rests.",
     "Each section has a lead instrument. Use development across sections by changing lead, energy, or musical role.",
     "Toy names: Pip keys, Ember guitar, Moss bass, Biscuit drums, Tux brass, Rosie violin, Wisp flute, Toffee harp, Pebble bells, Poppy shaker.",
     "Choose a title of at most 64 characters. Volumes are integers 0–100 by instrument ID. Any unspecified volumes stay the same.",
