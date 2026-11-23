@@ -5,7 +5,7 @@ export type Genre = typeof genres[number];
 export const STEPS_PER_BAR = 8;
 export const kinds = ["Intro", "Verse", "Chorus", "Bridge", "Outro"] as const;
 export const keys = ["C major", "D major", "G major", "A minor", "E minor", "D minor"] as const;
-export type SectionPlan = { name: typeof kinds[number]; bars: number; energy: number; lead: TrackId };
+export type SectionPlan = { name: typeof kinds[number]; bars: number; energy: number; lead: TrackId; phrase?: string; harmony?: string; ensemble?: string };
 export type SongPlan = { title: string; genre: Genre; bpm: number; key: typeof keys[number]; hook: number[]; sections: SectionPlan[] };
 export type Tracks = Record<TrackId, number[]>;
 export type Section = SectionPlan & { tracks: Tracks };
@@ -53,7 +53,7 @@ export function preset(genre: Genre) {
     { name: "Chorus", bars: 8, energy: 5, lead },
     { name: "Bridge", bars: 8, energy: 2, lead: colour[1] },
     { name: "Chorus", bars: 8, energy: 5, lead },
-    { name: "Outro", bars: 4, energy: 1, lead: colour[2] },
+    { name: "Outro", bars: 4, energy: 1, lead: colour[2] === "shaker" ? lead : colour[2] },
   ] };
   return compileSong(plan);
 }
@@ -61,46 +61,82 @@ export function preset(genre: Genre) {
 const tonics: Record<SongPlan["key"], number> = { "C major": 60, "D major": 62, "G major": 55, "A minor": 57, "E minor": 64, "D minor": 62 };
 const scales = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10] };
 const progressions = { bridge: [5, 3, 6, 4], verse: [0, 5, 3, 4], chorus: [0, 4, 5, 3] };
+const phrases: Record<SectionPlan["name"], string> = {
+  Intro: "1---30005---20003--4-5002---1000",
+  Verse: "10-305003-40200020-450005--30200",
+  Chorus: "5--605007-6005003--450006-500100",
+  Bridge: "6---40002--3-4005---30004---2000",
+  Outro: "5---30003---20002---70001-------",
+};
+const melodicRange: Partial<Record<TrackId, readonly [number, number]>> = {
+  bass: [36, 59], guitar: [48, 76], brass: [55, 79], violin: [57, 91], flute: [65, 91], harp: [54, 84], bells: [72, 91],
+};
+
+function inRegister(pitch: number, id: TrackId) {
+  const [low, high] = melodicRange[id] ?? [48, 84];
+  while (pitch < low) pitch += 12;
+  while (pitch > high) pitch -= 12;
+  return pitch;
+}
 
 function arrangeSection(plan: SongPlan, section: SectionPlan, index: number): Section {
   const scale = plan.key.includes("minor") ? scales.minor : scales.major;
   const tonic = tonics[plan.key];
   const profile = genreProfiles[plan.genre];
-  const progression = section.name === "Bridge" ? progressions.bridge : section.name === "Chorus" ? progressions.chorus : progressions.verse;
-  const pitches = (degree: number, octave = 0) => tonic + scale[degree % 7] + 12 * (Math.floor(degree / 7) + octave);
+  const progression = section.harmony ? Array.from(section.harmony, (degree) => Number(degree) - 1)
+    : section.name === "Bridge" ? progressions.bridge : section.name === "Chorus" ? progressions.chorus : progressions.verse;
+  const phrase = section.phrase ?? (section.name === "Verse"
+    ? plan.hook.join("") + phrases.Verse.slice(16) : phrases[section.name]);
+  const pitches = (degree: number, octave = 0) => tonic + scale[(degree % 7 + 7) % 7] + 12 * (Math.floor(degree / 7) + octave);
   const bright = ["Rock", "EDM", "Chiptune"].includes(plan.genre);
   const acoustic = ["Classical", "Folk", "Orchestra"].includes(plan.genre);
   const tracks = Object.fromEntries(trackIds.map((id) => [id, Array<number>(section.bars * STEPS_PER_BAR).fill(0)])) as Tracks;
   const pianoVoicing = acoustic ? [0, -1, 2, -1, 4, -1, 2, -1] : [0, -1, -1, 2, 4, -1, -1, -1];
   const guitarVoicing = bright ? [0, -1, 4, -1, 0, -1, 4, -1] : [-1, -1, 2, -1, -1, -1, 4, -1];
+  const lead = section.lead === "drums" || section.lead === "shaker" ? profile.lead : section.lead;
+  const ensemble = section.ensemble === "solo" ? [] : section.ensemble?.split(",") as TrackId[] | undefined;
+  const allowed = (id: TrackId) => !ensemble || ensemble.includes(id);
+  const colour = (ensemble ?? profile.colour).filter((id) => ![lead, "keys", "bass", "guitar", "drums"].includes(id));
+  const swell = section.name === "Chorus" && index >= 3;
+  const harmonyVoice = acoustic ? (lead === "violin" ? "flute" : "violin") : (lead === "keys" ? "guitar" : "keys");
   for (let bar = 0; bar < section.bars; bar++) {
     const closing = section.name === "Outro" && bar === section.bars - 1;
-    const root = closing ? 0 : progression[(bar + (section.name === "Bridge" ? 1 : 0)) % progression.length];
+    const cadence = bar === section.bars - 1 || section.name === "Outro" && bar === section.bars - 2;
+    const root = closing ? 0 : section.name === "Outro" && cadence ? 4 : progression[bar % 4];
     const indexOf = (step: number) => bar * STEPS_PER_BAR + step;
     const fill = bar % 4 === 3 && !closing;
     for (let step = 0; step < STEPS_PER_BAR; step++) {
       const position = indexOf(step);
-      const motifStep = (bar % 2) * STEPS_PER_BAR + step;
+      const motifStep = (bar % 4) * STEPS_PER_BAR + step;
       const accent = step === 0 || step === 4;
-      const theme = plan.hook[motifStep];
-      const lead = section.lead === "drums" || section.lead === "shaker" ? profile.lead : section.lead;
-      if (theme && (!closing || step === 0) && (section.energy >= 3 || step % 2 === 0)) {
-        const degree = closing ? 0 : accent ? root + ((theme - 1) % 3) * 2 : (theme - 1 + (fill ? 1 : 0)) % 7;
-        tracks[lead][position] = pitches(degree, section.name === "Chorus" && index > 2 ? 1 : 0);
+      const theme = closing ? step === 0 ? 1 : 0 : Number(phrase[motifStep]);
+      if (theme) {
+        const degree = theme - 1;
+        const chord = [root - 7, root - 5, root - 3, root, root + 2, root + 4, root + 7];
+        const voiced = accent && !closing ? chord.reduce((closest, next) =>
+          Math.abs(next - degree) < Math.abs(closest - degree) ? next : closest) : degree;
+        tracks[lead][position] = inRegister(pitches(voiced, swell && voiced <= 4 ? 1 : 0), lead);
       }
-      if (!tracks.keys[position] && pianoVoicing[step] >= 0 && !(closing && step)) tracks.keys[position] = pitches(root + pianoVoicing[step]);
-      if (!tracks.guitar[position] && guitarVoicing[step] >= 0 && section.energy >= 3 && !(closing && step)) {
+      if (lead !== "keys" && allowed("keys") && pianoVoicing[step] >= 0 && !(closing && step)) tracks.keys[position] = pitches(root + pianoVoicing[step], -1);
+      if (lead !== "guitar" && allowed("guitar") && guitarVoicing[step] >= 0 && (ensemble || section.energy >= 3) && !(closing && step)) {
         tracks.guitar[position] = pitches(root + guitarVoicing[step], -1);
       }
-      if (!tracks.bass[position] && (step === 0 || step === 4 && section.energy > 1 || bright && step === 6 && section.energy > 3)) tracks.bass[position] = pitches(root + (step === 6 ? 4 : 0), -2);
-      if (!closing && (section.energy >= 4 || !acoustic && section.energy >= 3 || bright && section.energy >= 2)) {
-        tracks.drums[position] = step === 0 || step === 4 ? 36 : step === 2 || step === 6 || fill && step === 7 ? 38 : 42;
+      if (lead !== "bass" && allowed("bass") && (step === 0 || !closing && (step === 4 && section.energy > 1 || bright && step === 6 && section.energy > 3))) {
+        tracks.bass[position] = pitches(root + (step === 6 ? 4 : 0), -2);
       }
-      for (const [layer, id] of profile.colour.entries()) {
-        if (section.energy < layer + 2 || closing && step !== 0 || (step + 2 * layer) % (layer === 2 ? 8 : 4) !== 0 || tracks[id][position]) continue;
-        tracks[id][position] = id === "shaker" ? 70 : pitches(root + 2 * (layer + 1), id === "bells" ? 1 : 0);
+      if (!closing && allowed("drums") && (ensemble || section.energy >= 4 || !acoustic && section.energy >= 3 || bright && section.energy >= 2)) {
+        tracks.drums[position] = acoustic ? step === 0 || step === 4 && swell ? 36 : fill && step === 6 ? 42 : 0
+          : step === 0 || step === 4 ? 36 : step === 2 || step === 6 || fill && step === 7 ? 38 : 42;
       }
-      if (section.energy === 5 && fill && step === 7) tracks.shaker[position] = 70;
+      if (allowed(harmonyVoice) && (step === 0 && (acoustic || section.energy >= 4) || step === 5 && acoustic && section.energy >= 3 && !closing)) {
+        tracks[harmonyVoice][position] = inRegister(pitches(root + (step ? 4 : 2)), harmonyVoice);
+      }
+      for (const [layer, id] of colour.entries()) {
+        if (!ensemble && section.energy < layer + 2 || closing || (step + 2 * layer) % (layer >= 2 ? 8 : 4) !== 0 || tracks[id][position]) continue;
+        if (bar === 0 && section.name === "Intro" && layer > 0) continue;
+        tracks[id][position] = id === "shaker" ? 70 : inRegister(pitches(root + 2 * (layer + 1), id === "bells" ? 1 : 0), id);
+      }
+      if (allowed("shaker") && section.energy === 5 && fill && step === 7) tracks.shaker[position] = 70;
     }
   }
   return { ...section, tracks };
@@ -123,17 +159,30 @@ export function parsePlan(value: unknown): SongPlan {
     || plan.sections.some((s) => !s || !kinds.includes(s.name) || !trackIds.includes(s.lead)
        || ![2, 4, 6, 8, 10, 12, 14, 16].includes(s.bars) || ![1, 2, 3, 4, 5].includes(s.energy))
     || plan.sections.reduce((sum, s) => sum + s.bars, 0) > 72) throw new Error("The song needs four to eight sections and at most 72 bars.");
-  return { title: plan.title.trim(), genre: plan.genre, key: plan.key, bpm: plan.bpm!, hook: plan.hook, sections: plan.sections };
+  const sections = plan.sections.map((part) => {
+    const phrase = typeof part.phrase === "string" ? part.phrase.replace(/\s/g, "") : undefined;
+    const harmony = typeof part.harmony === "string" ? part.harmony.replace(/\s/g, "") : undefined;
+    const palette = typeof part.ensemble === "string" ? part.ensemble.toLowerCase().replace(/\s/g, "") : undefined;
+    const instruments = palette?.split(",") ?? [];
+    const ensemble = palette === "solo" ? palette : instruments.length <= 9 && instruments.length > 0
+      && instruments.every((id) => trackIds.includes(id as TrackId)) ? [...new Set(instruments)].join(",") : undefined;
+    return { ...part, phrase: phrase && /^[0-7-]{32}$/.test(phrase) && /[1-7]/.test(phrase) ? phrase : undefined,
+      harmony: harmony && /^[1-7]{4}$/.test(harmony) ? harmony : undefined, ensemble };
+  });
+  return { title: plan.title.trim(), genre: plan.genre, key: plan.key, bpm: plan.bpm!, hook: plan.hook, sections };
 }
 
 export function compileSong(plan: SongPlan, previous?: Song): Song {
-  const sameTheme = previous && plan.genre === previous.genre && plan.key === previous.key
-    && plan.hook.every((value, index) => value === previous.hook[index]);
+  const sameKey = previous && plan.genre === previous.genre && plan.key === previous.key;
+  const sameHook = previous && plan.hook.every((value, index) => value === previous.hook[index]);
   return {
     ...plan,
     sections: plan.sections.map((section, index) => {
       const old = previous?.sections[index];
-      return sameTheme && old && section.name === old.name && section.bars === old.bars && section.energy === old.energy && section.lead === old.lead
+      return sameKey && (section.phrase || section.name !== "Verse" || sameHook)
+        && old && section.name === old.name && section.bars === old.bars && section.energy === old.energy
+        && section.lead === old.lead && section.phrase === old.phrase && section.harmony === old.harmony
+        && section.ensemble === old.ensemble
         ? old : arrangeSection(plan, section, index);
     }),
   };
