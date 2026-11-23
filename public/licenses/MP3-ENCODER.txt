@@ -1,0 +1,8 @@
+Toybox uses LAME through @breezystack/lamejs 1.2.7 under GNU LGPL 3.0.
+LAME project: https://lame.sourceforge.io/
+Encoder source: https://github.com/shijinyu/lamejs
+Unmodified npm distribution: https://registry.npmjs.org/@breezystack/lamejs/-/lamejs-1.2.7.tgz
+LGPL 3.0: https://www.gnu.org/licenses/lgpl-3.0.html
+GPL 3.0: https://www.gnu.org/licenses/gpl-3.0.html
+
+The Toybox MP3 worker links to the encoder. You can replace the encoder by changing the pinned dependency and rebuilding the project.

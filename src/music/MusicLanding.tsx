@@ -89,7 +89,7 @@ export function MusicLanding() {
         <div className="toy-feature-timeline" aria-label="Example song arrangement">
           <div><Music2 size={18} /> Parade of Small Things <span>40 bars</span></div>
           <ol>{["Intro", "Verse", "Chorus", "Bridge", "Chorus", "Outro"].map((part, index) => <li key={index} className={`part-${part.toLowerCase()}`}>{part}</li>)}</ol>
-          <div><Download size={18} /> Export your whole song as WAV</div>
+          <div><Download size={18} /> Export your whole song as MP3 or WAV</div>
         </div>
       </section>
 

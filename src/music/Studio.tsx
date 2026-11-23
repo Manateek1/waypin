@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, AudioLines, Download, Headphones, Music2, Play, 
 import { appPath } from "../paths";
 import { arrange, canArrange } from "./arrange";
 import { renderSong, ToyBand, type Position } from "./audio";
+import type { AudioFormat } from "./exportAudio";
 import { durationBars, durationSecs, genres, loadStudio, noteLabel, preset, saveStudio, STEPS_PER_BAR, timeLabel, toys, trackIds, type Genre, type Mix, type Song, type TrackId } from "./score";
 import "./studio.css";
 import "./songs.css";
@@ -23,7 +24,7 @@ export function Studio() {
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<"edit" | "create">("create");
   const [pending, setPending] = useState("");
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<AudioFormat | null>(null);
   const [message, setMessage] = useState("");
   const [source, setSource] = useState("");
   const [previous, setPrevious] = useState<{ song: Song; mix: Mix } | null>(null);
@@ -108,23 +109,24 @@ export function Studio() {
     }));
   }
 
-  async function downloadSong() {
+  async function downloadSong(format: AudioFormat) {
     if (exporting) return;
-    setExporting(true);
+    setExporting(format);
     setMessage("");
+    const label = format.toUpperCase();
     try {
-      const file = await renderSong(song, mix, master);
+      const file = await renderSong(song, mix, master, format);
       const url = URL.createObjectURL(file);
       const link = document.createElement("a");
       link.href = url;
-      link.download = (song.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "toybox-song") + ".wav";
+      link.download = (song.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "toybox-song") + "." + format;
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 30000);
-      setMessage("Your full song is ready as a WAV file.");
+      setMessage(`Your full song is ready as an audio file (${label}).`);
     } catch {
-      setMessage("The browser couldn’t render this WAV. Try again with fewer apps open.");
+      setMessage(`The browser couldn’t export this ${label}. Try again in a moment.`);
     } finally {
-      setExporting(false);
+      setExporting(null);
     }
   }
 
@@ -139,7 +141,10 @@ export function Studio() {
     <main className="toy-main song-main" id="toy-workspace">
       <div className="song-top">
         <div><h1>Song studio</h1><p>Arrange, play, and export with your toy band.</p></div>
-        <button className="toy-button toy-primary" type="button" disabled={exporting || busy} onClick={() => void downloadSong()}><Download size={17} />{exporting ? "Rendering WAV…" : "Download WAV"}</button>
+        <div className="song-exports">
+          <button className="toy-button toy-outline" type="button" disabled={!!exporting || busy} onClick={() => void downloadSong("wav")}>{exporting === "wav" ? "Rendering WAV…" : "Download WAV"}</button>
+          <button className="toy-button toy-primary" type="button" disabled={!!exporting || busy} onClick={() => void downloadSong("mp3")}><Download size={17} />{exporting === "mp3" ? "Rendering MP3…" : "Download MP3"}</button>
+        </div>
       </div>
 
       <form className="toy-prompt" onSubmit={generate}>
@@ -169,7 +174,7 @@ export function Studio() {
           <h2>{song.title}</h2>
         </div>{source && <span className="toy-source">{source}</span>}</div>
         <div className="toy-transport song-transport">
-          <button className="toy-button toy-play" type="button" onClick={() => void play()} disabled={starting}>{playing ? <Square size={16} fill="currentColor" /> : <Play size={17} fill="currentColor" />}{playing ? "Stop" : "Play song"}</button>
+          <button className="toy-button toy-play" type="button" onClick={() => void play()} disabled={starting}>{playing ? <Square size={16} fill="currentColor" /> : <Play size={17} fill="currentColor" />}{starting ? "Loading instruments…" : playing ? "Stop" : "Play song"}</button>
           <div className="song-time"><span>{timeLabel(time)} / {timeLabel(durationSecs(song))}</span><progress aria-label="Song playback progress" value={time} max={durationSecs(song)} /></div>
           <button className="toy-button toy-outline" type="button" aria-pressed={loop} onClick={() => setLoop(!loop)}><Repeat2 size={17} /> Loop</button>
           <label className="toy-tempo">Tempo <input type="range" min={60} max={180} value={song.bpm} disabled={busy} onChange={(event) => setSong({ ...song, bpm: Number(event.target.value) })} /><output>{song.bpm} BPM</output></label>
