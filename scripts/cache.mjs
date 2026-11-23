@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 
-for (const route of ["audit", "field-guide"]) {
+for (const route of ["audit", "field-guide", "studio"]) {
   await mkdir("dist/" + route, { recursive: true });
   await copyFile("dist/index.html", "dist/" + route + "/index.html");
 }
@@ -28,7 +28,7 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== location.origin) return;
-  if (request.mode === "navigate" && !url.search && ["", "audit", "audit/", "field-guide", "field-guide/"].some((route) => url.pathname === scope + route)) {
+  if (request.mode === "navigate" && !url.search && ["", "audit", "audit/", "field-guide", "field-guide/", "studio", "studio/"].some((route) => url.pathname === scope + route)) {
     event.respondWith(caches.open(cacheName).then((cache) => cache.match(scope + "index.html")).then((cached) => cached || fetch(request)));
   } else if (files.includes(url.pathname)) {
     event.respondWith(caches.open(cacheName).then((cache) => cache.match(request)).then((cached) => cached || fetch(request)));

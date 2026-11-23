@@ -2,7 +2,7 @@
 
 Toybox is the home screen. Choose Classical, Rock, or Orchestra, press **Play**, and tap a toy to hear its instrument. Edit the note grid and mixer directly, or ask Gemini for changes like “slow it down and make the drums softer.” The editable two-bar arrangement is saved in this browser. Browsers synthesize the audio from notes with Web Audio. Gemini returns arrangement edits as structured JSON using Firebase AI Logic when connected, with Chrome Nano available on supported devices when offline.
 
-[Open Toybox](https://manateek1.github.io/waypin/)
+[Open Toybox](https://manateek1.github.io/waypin/studio/)
 
 ## Waypin field audit
 

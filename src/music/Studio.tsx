@@ -100,7 +100,7 @@ export function Studio() {
   return <div className="toy-studio">
     <a className="skip" href="#toy-workspace">Skip to studio</a>
     <header className="toy-header">
-      <a className="toy-logo" href={appPath()}><span><AudioLines size={22} /></span> Toybox</a>
+      <a className="toy-logo" href={appPath("studio/")}><span><AudioLines size={22} /></span> Toybox</a>
       <a className="toy-archive" href={appPath("audit/")}>Waypin audit <ArrowRight size={15} /></a>
     </header>
     <main className="toy-main" id="toy-workspace">
