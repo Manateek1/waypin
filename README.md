@@ -2,7 +2,9 @@
 
 Toybox’s landing page has playable examples for games, videos, and songwriting. In the studio, pick one of eight genres or ask Gemini to write an entire instrumental for ten toy musicians. Play the song across its sections, change the notes, preview individual instruments, and export the complete mix as an MP3 or WAV. Your arrangement is saved in this browser.
 
-Firebase AI Logic writes melodic phrases and chord progressions for each section and applies prompt-based edits. Toybox arranges those parts into editable notes and performs them with sampled instruments, shaped dynamics, and a stereo room mix. The cloud uses the Spark tier. Supported desktop Chrome devices can also arrange on-device with Gemini Nano.
+Firebase AI Logic writes melodic phrases and chord progressions for each section and applies prompt-based edits. Toybox arranges those parts into editable notes and performs them with sampled instruments, shaped dynamics, and a stereo room mix. In the studio, **Auto** prefers Gemini Nano through Firebase AI Logic and falls back to the Gemini Developer API on the free Spark tier. **On device only** and **Cloud only** make it possible to test each path separately. On a supported desktop Chrome, the first on-device run may need to download Gemini Nano. The source badge comes from Firebase's inference response.
+
+New compositions and presets get separate local drafts. Use **Saved songs** to reopen one. If two tabs edit the same draft, the later writer receives its own copy. MP3 and WAV export render in chunks, with progress and cancellation.
 
 The [instrument credits](public/sounds/CREDITS.txt) identify the recording libraries and licenses. [LAME](https://lame.sourceforge.io/) powers in-browser MP3 export through [`@breezystack/lamejs` 1.2.7](https://www.npmjs.com/package/@breezystack/lamejs/v/1.2.7), shipped separately from the app in a web worker. See the [encoder notice](public/licenses/MP3-ENCODER.txt) for source and license links.
 

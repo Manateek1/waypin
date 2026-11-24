@@ -5,10 +5,10 @@ export type Genre = typeof genres[number];
 export const STEPS_PER_BAR = 8;
 export const kinds = ["Intro", "Verse", "Chorus", "Bridge", "Outro"] as const;
 export const keys = ["C major", "D major", "G major", "A minor", "E minor", "D minor"] as const;
-export type SectionPlan = { name: typeof kinds[number]; bars: number; energy: number; lead: TrackId; phrase?: string; harmony?: string; ensemble?: string };
+export type SectionPlan = { id?: string; name: typeof kinds[number]; bars: number; energy: number; lead: TrackId; phrase?: string; harmony?: string; ensemble?: string };
 export type SongPlan = { title: string; genre: Genre; bpm: number; key: typeof keys[number]; hook: number[]; sections: SectionPlan[] };
 export type Tracks = Record<TrackId, number[]>;
-export type Section = SectionPlan & { tracks: Tracks };
+export type Section = SectionPlan & { tracks: Tracks; noteEdits?: Partial<Record<TrackId, Record<number, number>>> };
 export type Song = Omit<SongPlan, "sections"> & { sections: Section[] };
 export type Mix = Record<TrackId, { volume: number; muted: boolean }>;
 
@@ -172,14 +172,15 @@ export function validNote(id: TrackId, note: unknown): note is number {
     && (note === 0 || (id === "drums" ? [36, 38, 42].includes(note) : id === "shaker" ? note === 70 : note >= 28 && note <= 96));
 }
 
-export function parsePlan(value: unknown): SongPlan {
+export function parsePlan(value: unknown, mode: "stored" | "create" | "edit" = "stored"): SongPlan {
   if (!value || typeof value !== "object") throw new Error("The arrangement could not be read.");
   const plan = value as Partial<SongPlan>;
   if (typeof plan.title !== "string" || !plan.title.trim() || plan.title.length > 64 || !plan.genre || !genres.includes(plan.genre)
     || !plan.key || !keys.includes(plan.key) || !Number.isInteger(plan.bpm) || plan.bpm! < 60 || plan.bpm! > 180) {
     throw new Error("The song needs a title, musical key, and a tempo from 60 to 180 BPM.");
   }
-  if (!Array.isArray(plan.hook) || plan.hook.length !== 16 || plan.hook.some((n) => !Number.isInteger(n) || n < 0 || n > 7)) throw new Error("Gemini returned an invalid melody.");
+  if (!Array.isArray(plan.hook) || plan.hook.length !== 16 || plan.hook.some((n) => !Number.isInteger(n) || n < 0 || n > 7)
+    || mode === "create" && !plan.hook.some(Boolean)) throw new Error("Gemini returned an invalid melody.");
   if (!Array.isArray(plan.sections) || plan.sections.length < 4 || plan.sections.length > 8
     || plan.sections.some((s) => !s || !kinds.includes(s.name) || !trackIds.includes(s.lead)
        || ![2, 4, 6, 8, 10, 12, 14, 16].includes(s.bars) || ![1, 2, 3, 4, 5].includes(s.energy))
@@ -191,8 +192,15 @@ export function parsePlan(value: unknown): SongPlan {
     const instruments = palette?.split(",") ?? [];
     const ensemble = palette === "solo" ? palette : instruments.length <= 9 && instruments.length > 0
       && instruments.every((id) => trackIds.includes(id as TrackId)) ? [...new Set(instruments)].join(",") : undefined;
-    return { ...part, phrase: phrase && /^[0-7-]{32}$/.test(phrase) && /[1-7]/.test(phrase) ? phrase : undefined,
-      harmony: harmony && /^[1-7]{4}$/.test(harmony) ? harmony : undefined, ensemble };
+    const validPhrase = phrase && /^[0-7-]{32}$/.test(phrase) && /[1-7]/.test(phrase) ? phrase : undefined;
+    const validHarmony = harmony && /^[1-7]{4}$/.test(harmony) ? harmony : undefined;
+    if (mode !== "stored" && (
+      (mode === "create" || part.phrase) && !validPhrase ||
+      (mode === "create" || part.harmony) && !validHarmony ||
+      (mode === "create" || part.ensemble) && !ensemble
+    )) throw new Error(`Gemini returned an invalid ${part.name.toLowerCase()} phrase, chord progression, or instrument list.`);
+    const id = typeof part.id === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(part.id) ? part.id : undefined;
+    return { id, name: part.name, bars: part.bars, energy: part.energy, lead: part.lead, phrase: validPhrase, harmony: validHarmony, ensemble };
   });
   return { title: plan.title.trim(), genre: plan.genre, key: plan.key, bpm: plan.bpm!, hook: plan.hook, sections };
 }
@@ -200,15 +208,31 @@ export function parsePlan(value: unknown): SongPlan {
 export function compileSong(plan: SongPlan, previous?: Song): Song {
   const sameKey = previous && plan.genre === previous.genre && plan.key === previous.key;
   const sameHook = previous && plan.hook.every((value, index) => value === previous.hook[index]);
+  const used = new Set<Section>();
+  const reserved = new Set(plan.sections.map((part) => part.id).filter(Boolean));
+  const sameArrangement = (left: SectionPlan, right: SectionPlan) => left.name === right.name && left.bars === right.bars
+    && left.energy === right.energy && left.lead === right.lead && left.phrase === right.phrase && left.harmony === right.harmony
+    && left.ensemble === right.ensemble;
   return {
     ...plan,
     sections: plan.sections.map((section, index) => {
-      const old = previous?.sections[index];
-      return sameKey && (section.phrase || section.name !== "Verse" || sameHook)
-        && old && section.name === old.name && section.bars === old.bars && section.energy === old.energy
-        && section.lead === old.lead && section.phrase === old.phrase && section.harmony === old.harmony
-        && section.ensemble === old.ensemble
-        ? old : arrangeSection(plan, section, index);
+      const old = previous?.sections.find((candidate) => !used.has(candidate) && (section.id
+        ? candidate.id === section.id
+        : !reserved.has(candidate.id) && sameArrangement(section, candidate)));
+      if (old) used.add(old);
+      const id = old?.id ?? crypto.randomUUID();
+      if (sameKey && (section.phrase || section.name !== "Verse" || sameHook) && old && sameArrangement(section, old)) return { ...old, id };
+      const arranged = arrangeSection(plan, { ...section, id }, index);
+      if (old?.noteEdits && sameKey) {
+        arranged.noteEdits = old.noteEdits;
+        for (const track of trackIds) {
+          for (const [offset, pitch] of Object.entries(old.noteEdits[track] ?? {})) {
+            const step = Number(offset);
+            if (step < arranged.tracks[track].length) arranged.tracks[track][step] = pitch;
+          }
+        }
+      }
+      return arranged;
     }),
   };
 }
@@ -226,11 +250,19 @@ function readSaved<T>(key: string): T | null {
 
 function savedSong(song: Song | null | undefined) {
   try {
-    parsePlan(song);
+    const plan = parsePlan(song);
     if (song?.sections.every((section) => trackIds.every((id) => {
       const notes = section.tracks?.[id];
       return Array.isArray(notes) && notes.length === section.bars * STEPS_PER_BAR && notes.every((note) => validNote(id, note));
-    }))) return song;
+    }))) {
+      const ids = new Set<string>();
+      return { ...plan, sections: song.sections.map((section, index) => {
+        const part = plan.sections[index];
+        const id = part.id && !ids.has(part.id) ? part.id : crypto.randomUUID();
+        ids.add(id);
+        return { ...part, id, tracks: section.tracks, noteEdits: section.noteEdits };
+      }) };
+    }
   } catch { /* Fall back to an earlier save or a preset. */ }
 }
 
@@ -251,12 +283,16 @@ function legacySong() {
 }
 
 type StudioSettings = { song: Song; mix: Mix; master: number; loop: boolean };
+type StoredSettings = StudioSettings & { revision?: string };
+const savedPrefix = "toybox-studio:project:";
 const volumeInRange = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100;
 
 export function loadStudio() {
-  const example = examples.find(({ id }) => id === new URLSearchParams(location.search).get("example"));
-  const key = example ? `toybox-studio:${example.id}` : "toybox-studio";
-  const saved = readSaved<Partial<StudioSettings>>(key);
+  const params = new URLSearchParams(location.search);
+  const example = examples.find(({ id }) => id === params.get("example"));
+  const draft = params.get("draft");
+  const key = draft && /^[a-zA-Z0-9_-]{1,64}$/.test(draft) ? savedPrefix + draft : example ? `toybox-studio:${example.id}` : "toybox-studio";
+  const saved = readSaved<Partial<StoredSettings>>(key);
   const song = savedSong(saved?.song) ?? (example
     ? preset(example.genre)
     : savedSong(readSaved<Song>("toybox-full-song")) ?? legacySong() ?? preset("Orchestra"));
@@ -267,13 +303,38 @@ export function loadStudio() {
       mix[id] = track;
     }
   }
-  return { key, song, mix, master: volumeInRange(saved?.master) ? saved.master : 82, loop: saved?.loop === true };
+  return { key, revision: saved?.revision, song, mix, master: volumeInRange(saved?.master) ? saved.master : 82, loop: saved?.loop === true };
 }
 
-export function saveStudio(key: string, settings: StudioSettings) {
+export const newDraftKey = () => savedPrefix + crypto.randomUUID();
+
+export function draftQuery(key: string) {
+  if (key.startsWith(savedPrefix)) return "?draft=" + encodeURIComponent(key.slice(savedPrefix.length));
+  return key === "toybox-studio" ? "" : "?example=" + encodeURIComponent(key.slice("toybox-studio:".length));
+}
+
+export function listDrafts() {
   try {
-    localStorage.setItem(key, JSON.stringify(settings));
-  } catch { /* Playback and editing also work with storage disabled. */ }
+    const result: { key: string; title: string }[] = [];
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index);
+      if (!key?.startsWith("toybox-studio")) continue;
+      const title = readSaved<Partial<StoredSettings>>(key)?.song?.title;
+      if (typeof title === "string" && title.trim()) result.push({ key, title });
+    }
+    return result.sort((a, b) => a.title.localeCompare(b.title));
+  } catch { return []; }
+}
+
+export function saveStudio(key: string, settings: StudioSettings, expectedRevision?: string) {
+  try {
+    const current = readSaved<Partial<StoredSettings>>(key);
+    const forked = current?.revision !== expectedRevision;
+    const destination = forked ? newDraftKey() : key;
+    const revision = crypto.randomUUID();
+    localStorage.setItem(destination, JSON.stringify({ ...settings, revision }));
+    return { key: destination, revision, forked };
+  } catch { return null; }
 }
 
 const noteNames = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];

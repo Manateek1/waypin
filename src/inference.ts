@@ -15,6 +15,18 @@ export const cloudConfigured = Boolean(app && siteKey);
 
 let appCheckInitialized = false;
 
+export const scoreDeviceConfigured = Boolean(app && typeof LanguageModel !== "undefined");
+const scoreDeviceOptions = {
+  expectedInputs: [{ type: "text" as const, languages: ["en"] }],
+  expectedOutputs: [{ type: "text" as const, languages: ["en"] }],
+};
+
+export async function scoreDeviceAvailability() {
+  if (!scoreDeviceConfigured) return "unavailable";
+  try { return await LanguageModel.availability(scoreDeviceOptions); }
+  catch { return "unavailable"; }
+}
+
 function backend(cloud: boolean) {
   if (!app) throw new Error("Live Firebase AI is not configured on this build.");
   if (cloud && !siteKey) throw new Error("Cloud AI requires a configured App Check provider.");
@@ -116,17 +128,25 @@ async function firebaseBrief(prompt: string, quick: boolean) {
   return { raw: result.response.text(), origin: inferenceOrigin(result.response.inferenceSource) };
 }
 
-export async function generateCloudScore(prompt: string, schema: Schema) {
-  const model = getGenerativeModel(backend(true), {
-    mode: InferenceMode.ONLY_IN_CLOUD,
+export async function generateFirebaseScore(prompt: string, schema: Schema, deviceSchema: object,
+  mode: InferenceMode, onProgress: (percent: number) => void) {
+  const deviceOnly = mode === InferenceMode.ONLY_ON_DEVICE;
+  const model = getGenerativeModel(backend(!deviceOnly), {
+    mode,
+    onDeviceParams: { createOptions: scoreDeviceOptions, promptOptions: { responseConstraint: deviceSchema } },
     inCloudParams: {
       ...cloudParams,
       generationConfig: { responseMimeType: "application/json", responseSchema: schema, maxOutputTokens: 1800, temperature: 0.55 },
     },
   });
-  const result = await model.generateContent(prompt);
-  if (result.response.inferenceSource !== InferenceSource.IN_CLOUD) throw new Error("Cloud Gemini did not confirm the inference source.");
-  return parseObject(result.response.text());
+  if (deviceOnly) await model.initializeDeviceModel((value) => onProgress(Math.round(value * 100)));
+  else if (mode === InferenceMode.PREFER_ON_DEVICE) void model.initializeDeviceModel().catch(() => undefined);
+  const result = await model.generateContent(prompt, { timeout: 45000 });
+  const origin = inferenceOrigin(result.response.inferenceSource);
+  if (deviceOnly && origin !== "On device" || mode === InferenceMode.ONLY_IN_CLOUD && origin !== "Cloud") {
+    throw new Error("Firebase returned the wrong inference source.");
+  }
+  return { raw: result.response.text(), origin };
 }
 
 const priorities = ["First", "Next", "Follow up"] as const;

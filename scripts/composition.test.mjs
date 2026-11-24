@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compileSong, durationBars, genres, jazzShellNote, parsePlan, preset, trackIds, validNote } from "../src/music/score.ts";
+import { compileSong, defaultMix, durationBars, genres, jazzShellNote, parsePlan, preset, saveStudio, trackIds, validNote } from "../src/music/score.ts";
 
 const phrases = [
   "1---3000 5---2000 3--4-500 2---1000",
@@ -65,4 +65,53 @@ test("rock backbeat and jazz walking bass use different rhythmic parts", () => {
   assert.ok(jazz.keys[3]);
   assert.equal(jazzShellNote(53, "C major"), 60); // Dm7: F and C.
   assert.equal(jazzShellNote(59, "C major"), 65); // G7: B and F.
+});
+
+test("inserting a section keeps the edited verse and doesn't reuse its ID", () => {
+  const song = preset("Orchestra");
+  song.sections[1].tracks.keys[0] = 95;
+  song.sections[1].noteEdits = { keys: { 0: 95 } };
+  const plan = parsePlan(song);
+  const inserted = { ...plan.sections[0], id: undefined, bars: 2 };
+  const edited = compileSong({ ...plan, sections: [inserted, ...plan.sections] }, song);
+  assert.notEqual(edited.sections[0].id, song.sections[0].id);
+  assert.equal(edited.sections[2].id, song.sections[1].id);
+  assert.equal(edited.sections[2].tracks.keys[0], 95);
+  plan.sections[1].energy++;
+  assert.equal(compileSong(plan, song).sections[1].tracks.keys[0], 95);
+});
+
+test("generated scores reject missing or invalid musical choices", () => {
+  const song = preset("Orchestra");
+  const valid = { ...song, sections: song.sections.map((p) => ({ ...p, phrase: phrases[0], harmony: "1645", ensemble: "solo" })) };
+  assert.equal(parsePlan(valid, "create").sections[0].ensemble, "solo");
+  for (const changes of [{ phrase: "123" }, { harmony: "1238" }, { ensemble: "drum kit" }, { ensemble: "" }]) {
+    assert.throws(() => parsePlan({ ...valid, sections: [{ ...valid.sections[0], ...changes }, ...valid.sections.slice(1)] }, "create"),
+      /phrase, chord progression, or instrument list/);
+  }
+  assert.doesNotThrow(() => parsePlan(song, "stored"));
+});
+
+test("a stale tab saves a copy and a storage error is observable", () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const records = new Map();
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+    getItem: (key) => records.get(key),
+    setItem: (key, value) => records.set(key, value),
+  } });
+  try {
+    const settings = { song: preset("Jazz"), mix: defaultMix(), master: 82, loop: false };
+    const first = saveStudio("toybox-studio", settings);
+    const newer = saveStudio(first.key, settings, first.revision);
+    const stale = saveStudio(first.key, { ...settings, master: 55 }, first.revision);
+    assert.equal(stale.forked, true);
+    assert.notEqual(stale.key, first.key);
+    assert.equal(JSON.parse(records.get(first.key)).revision, newer.revision);
+    assert.equal(JSON.parse(records.get(stale.key)).master, 55);
+    localStorage.setItem = () => { throw new Error("Quota exceeded"); };
+    assert.equal(saveStudio(first.key, settings, newer.revision), null);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else delete globalThis.localStorage;
+  }
 });
