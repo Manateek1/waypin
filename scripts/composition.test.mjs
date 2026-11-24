@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compileSong, defaultMix, durationBars, genres, jazzShellNote, parsePlan, preset, saveStudio, trackIds, validNote } from "../src/music/score.ts";
+import { compileSong, defaultMix, durationBars, genres, jazzShellNote, parsePlan, planFromDeviceSketch, preset, saveStudio, trackIds, validNote } from "../src/music/score.ts";
 
 const phrases = [
   "1---3000 5---2000 3--4-500 2---1000",
@@ -114,4 +114,16 @@ test("a stale tab saves a copy and a storage error is observable", () => {
     if (original) Object.defineProperty(globalThis, "localStorage", original);
     else delete globalThis.localStorage;
   }
+});
+
+test("a compact Nano sketch yields a complete arrangement that uses its motifs and instruments", () => {
+  const sketch = { title: "Sketch", genre: "Folk", key: "G major", bpm: 92, bars: 18,
+    lead: "guitar", ensemble: ["bass"], theme: [1, 0, 2, 3, 0, 5, 6, 0], contrast: [4, 0, 2, 0, 1, 5, 0, 3] };
+  const piece = compileSong(planFromDeviceSketch(sketch));
+  assert.equal(durationBars(piece), 18);
+  assert.ok(piece.sections[1].tracks.guitar.some(Boolean));
+  assert.ok(piece.sections[1].tracks.bass.some(Boolean));
+  assert.ok(piece.sections.every((part) => !part.tracks.drums.some(Boolean)));
+  assert.notDeepEqual(piece.sections[1].phrase, piece.sections[2].phrase);
+  assert.throws(() => planFromDeviceSketch({ ...sketch, theme: Array(8).fill(0) }), /eight-step motifs/);
 });

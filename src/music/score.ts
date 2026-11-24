@@ -236,6 +236,45 @@ export function compileSong(plan: SongPlan, previous?: Song): Song {
     }),
   };
 }
+
+export function planFromDeviceSketch(value: unknown): SongPlan {
+  if (!value || typeof value !== "object") throw new Error("The device sketch could not be read.");
+  const sketch = value as Partial<SongPlan> & { bars?: number; theme?: number[]; contrast?: number[]; lead?: TrackId; ensemble?: TrackId[] };
+  const usableMotif = (notes: unknown): notes is number[] => Array.isArray(notes) && notes.length === 8
+    && notes.every((note) => Number.isInteger(note) && note >= 0 && note <= 7) && notes.some(Boolean);
+  if (!usableMotif(sketch.theme) || !usableMotif(sketch.contrast)) throw new Error("The sketch needs two eight-step motifs with notes.");
+  if (!Number.isInteger(sketch.bars) || sketch.bars! < 8 || sketch.bars! > 72 || sketch.bars! % 2) {
+    throw new Error("The sketch needs an even song length from 8 through 72 bars.");
+  }
+  if (!sketch.lead || !trackIds.includes(sketch.lead) || sketch.lead === "drums" || sketch.lead === "shaker"
+    || !Array.isArray(sketch.ensemble) || sketch.ensemble.length > 5 || sketch.ensemble.some((id) => !trackIds.includes(id))) {
+    throw new Error("The sketch needs a melodic instrument and a valid backing group.");
+  }
+  const theme = sketch.theme.join("");
+  const contrast = sketch.contrast.join("");
+  const ensemble = [...new Set(sketch.ensemble.filter((id) => id !== sketch.lead))];
+  const total = sketch.bars!;
+  const names = total < 24 ? (["Intro", "Verse", "Bridge", "Outro"] as const)
+    : (["Intro", "Verse", "Chorus", "Bridge", "Chorus", "Outro"] as const);
+  const units = total / 2;
+  const base = Math.floor(units / names.length);
+  const extra = units % names.length;
+  return parsePlan({
+    title: sketch.title, genre: sketch.genre, key: sketch.key, bpm: sketch.bpm, hook: [...sketch.theme, ...sketch.contrast],
+    sections: names.map((name, index) => {
+      const phrase = name === "Bridge" ? contrast + theme + contrast + contrast
+        : name === "Chorus" ? theme + theme + contrast + theme
+        : name === "Outro" ? contrast + theme + contrast + "1-------" : theme + contrast + theme + contrast;
+      const harmony = sketch.genre === "Jazz" ? (name === "Bridge" ? "3625" : "2516")
+        : name === "Bridge" ? "6345" : name === "Chorus" ? "1564" : "1645";
+      return {
+        name, bars: 2 * (base + (index < extra ? 1 : 0)), energy: name === "Intro" || name === "Outro" ? 2 : name === "Chorus" ? 5 : 3,
+        lead: sketch.lead, phrase, harmony, ensemble: ensemble.join(",") || "solo",
+      };
+    }),
+  }, "create");
+}
+
 export const durationBars = (song: Song) => song.sections.reduce((sum, section) => sum + section.bars, 0);
 export const durationSecs = (song: Song) => durationBars(song) * 240 / song.bpm;
 export const timeLabel = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
