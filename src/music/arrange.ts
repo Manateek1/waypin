@@ -94,13 +94,16 @@ export async function arrange(song: Song, mix: Mix, request: string, mode: "edit
     response = await run(strategy);
   } catch (error) {
     const description = error instanceof Error ? error.message : "";
+    const status = /\[\s*(\d{3})\s*\]/.exec(description)?.[1];
+    const transient = status === "500" || status === "502" || status === "503" || status === "504" || /time(?:d out|out)/i.test(description);
     if (strategy === InferenceMode.ONLY_ON_DEVICE) throw new Error("Gemini Nano couldn't finish on this device. Your song is still ready to play.");
-    if (strategy === InferenceMode.PREFER_ON_DEVICE && availability === "available" && !/\[(?:429|500|502|503|504)\]|timeout/i.test(description)) {
+    if (strategy === InferenceMode.PREFER_ON_DEVICE && availability === "available" && status === undefined && !transient) {
       onProgress("Trying the cloud model…");
-      response = await run(InferenceMode.ONLY_IN_CLOUD);
+      try { response = await run(InferenceMode.ONLY_IN_CLOUD); }
+      catch { throw new Error("Gemini couldn't finish on device or in the cloud. Your song was kept."); }
     } else {
-      if (!/\[(?:500|502|503|504)\]|timeout/i.test(description)) {
-        throw new Error(/429/.test(description) ? "Cloud generation reached its free usage limit. Try again later or switch to On device."
+      if (!transient) {
+        throw new Error(status === "429" ? "Cloud generation reached its free usage limit. Try again later or switch to On device."
           : "Cloud generation is unavailable right now. Check your connection and try again.");
       }
       onProgress("Gemini is busy · retrying once…");
@@ -118,7 +121,7 @@ export async function arrange(song: Song, mix: Mix, request: string, mode: "edit
       ? InferenceMode.ONLY_IN_CLOUD : response.origin === "On device" ? InferenceMode.ONLY_ON_DEVICE : InferenceMode.ONLY_IN_CLOUD;
     const problem = error instanceof SyntaxError ? "The response was not valid JSON." : error instanceof Error ? error.message : "The score was incomplete.";
     try {
-      response = await run(provider, `Correct this problem: ${problem} Return a complete valid score using exactly the requested format.`);
+      response = await run(provider, `Correct this problem: ${problem} Keep the original request's title, genre, length, and instrumentation. Return a complete valid score using exactly the requested format.`);
       result = verify(response.raw);
     } catch {
       throw new Error("Gemini couldn't produce a valid score. Try rephrasing the request. Your current song was kept.");
