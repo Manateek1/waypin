@@ -1,6 +1,6 @@
 import { InferenceMode, Schema } from "firebase/ai";
 import { cloudConfigured, generateFirebaseScore, scoreDeviceAvailability } from "../inference";
-import { compileSong, genres, keys, kinds, parsePlan, trackIds, type Mix, type Song, type TrackId } from "./score";
+import { compileSong, genres, keys, kinds, parsePlan, planFromDeviceSketch, trackIds, type Mix, type Song, type TrackId } from "./score";
 
 const range = (minimum: number, maximum: number) => ({ type: "integer", minimum, maximum });
 const list = (items: object, minItems: number, maxItems: number) => ({ type: "array", items, minItems, maxItems });
@@ -26,6 +26,19 @@ const cloudSchema = Schema.object({ properties: {
     phrase: Schema.string(), harmony: Schema.string(), ensemble: Schema.string(),
   } }) }),
   volumes: Schema.object({ properties: Object.fromEntries(trackIds.map((id) => [id, integer(0, 100)])) }),
+} });
+
+const melodicTracks = trackIds.filter((id) => id !== "drums" && id !== "shaker");
+const sketchDeviceSchema = object({
+  title: { type: "string" }, genre: enumeration(genres), key: enumeration(keys), bpm: range(60, 180), bars: range(8, 72),
+  lead: enumeration(melodicTracks), ensemble: list(enumeration(trackIds), 0, 5),
+  theme: list(range(0, 7), 8, 8), contrast: list(range(0, 7), 8, 8),
+});
+const motifSchema = () => Schema.array({ items: integer(0, 7), minItems: 8, maxItems: 8 });
+const sketchCloudSchema = Schema.object({ properties: {
+  title: Schema.string(), genre: choice(genres), key: choice(keys), bpm: integer(60, 180), bars: integer(8, 72),
+  lead: choice(melodicTracks), ensemble: Schema.array({ items: choice(trackIds), minItems: 0, maxItems: 5 }),
+  theme: motifSchema(), contrast: motifSchema(),
 } });
 
 export type InferenceChoice = "auto" | "device" | "cloud";
@@ -64,11 +77,25 @@ export async function arrange(song: Song, mix: Mix, request: string, mode: "edit
   const strategy = choice === "device" || !cloud ? InferenceMode.ONLY_ON_DEVICE
     : choice === "cloud" || availability === "unavailable" ? InferenceMode.ONLY_IN_CLOUD : InferenceMode.PREFER_ON_DEVICE;
   const progress = (percent: number) => onProgress(percent < 100 ? `Downloading Nano · ${percent}%` : "Arranging on device…");
-  const run = (selectedMode: InferenceMode, instruction = "") =>
-    generateFirebaseScore([prompt, instruction].filter(Boolean).join("\n"), cloudSchema, deviceSchema, selectedMode, progress);
+  const sketchPrompt = [
+    "Compose the musical themes for an original instrumental based on the request. Return only the JSON sketch.",
+    "Pick a title under 65 characters, a genre, a key, tempo (60–180 BPM), and an even total length (8–72 bars).",
+    "Choose a melodic lead instrument and up to five other instruments by ID. For a solo, use an empty ensemble.",
+    "Each of theme and contrast is an array of exactly eight integers. 0 is a rest and 1–7 are scale degrees. Include notes in both motifs.",
+    "Toy names: Pip keys, Ember guitar, Moss bass, Biscuit drums, Tux brass, Rosie violin, Wisp flute, Toffee harp, Pebble bells, Poppy shaker.",
+    JSON.stringify({ request }),
+  ].join("\n");
+  const run = async (selectedMode: InferenceMode, instruction = "") => {
+    const sketch = mode === "create" && (selectedMode === InferenceMode.ONLY_ON_DEVICE
+      || selectedMode === InferenceMode.PREFER_ON_DEVICE && availability === "available");
+    const generated = await generateFirebaseScore([sketch ? sketchPrompt : prompt, instruction].filter(Boolean).join("\n"),
+      sketch ? sketchCloudSchema : cloudSchema, sketch ? sketchDeviceSchema : deviceSchema, selectedMode, progress);
+    return { ...generated, sketch };
+  };
 
-  function verify(raw: string) {
-    const value = JSON.parse(raw.trim().replace(/^```(?:json)?\s*|\s*```$/gi, ""));
+  function verify(response: { raw: string; sketch: boolean }) {
+    const value = JSON.parse(response.raw.trim().replace(/^```(?:json)?\s*|\s*```$/gi, ""));
+    if (response.sketch) return { song: compileSong(planFromDeviceSketch(value)), volumes };
     const plan = parsePlan(value, mode);
     if (mode === "edit") {
       const ids = new Set<string>();
@@ -114,7 +141,7 @@ export async function arrange(song: Song, mix: Mix, request: string, mode: "edit
   }
 
   let result: ReturnType<typeof verify>;
-  try { result = verify(response.raw); }
+  try { result = verify(response); }
   catch (error) {
     onProgress("Correcting the score format…");
     const provider = response.origin === "On device" && choice === "auto" && cloud
@@ -122,7 +149,7 @@ export async function arrange(song: Song, mix: Mix, request: string, mode: "edit
     const problem = error instanceof SyntaxError ? "The response was not valid JSON." : error instanceof Error ? error.message : "The score was incomplete.";
     try {
       response = await run(provider, `Correct this problem: ${problem} Keep the original request's title, genre, length, and instrumentation. Return a complete valid score using exactly the requested format.`);
-      result = verify(response.raw);
+      result = verify(response);
     } catch {
       throw new Error("Gemini couldn't produce a valid score. Try rephrasing the request. Your current song was kept.");
     }
