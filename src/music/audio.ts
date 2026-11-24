@@ -1,5 +1,5 @@
 import { Voices } from "./samples";
-import { encodeMp3, encodeWav, type AudioFormat } from "./exportAudio";
+import { createMp3Encoder, wavChunk, wavFile, type AudioFormat } from "./exportAudio";
 import { durationSecs, jazzShellNote, STEPS_PER_BAR, trackIds, type Genre, type Mix, type Section, type Song, type TrackId } from "./score";
 
 export type Position = { section: number; step: number };
@@ -196,28 +196,57 @@ export class ToyBand {
   }
 }
 
-export async function renderSong(song: Song, mix: Mix, master: number, format: AudioFormat) {
+export async function renderSong(song: Song, mix: Mix, master: number, format: AudioFormat,
+  signal?: AbortSignal, onProgress?: (percent: number) => void) {
   const rate = 44100;
-  const ctx = new OfflineAudioContext(2, Math.ceil((durationSecs(song) + releaseTail) * rate), rate);
-  const { bus } = mixBus(ctx, song.genre);
-  bus.gain.value = master / 100;
-  const voices = new Voices(ctx);
+  const frames = Math.ceil((durationSecs(song) + releaseTail) * rate);
   const audibleTracks = trackIds.filter((id) => !mix[id].muted && mix[id].volume > 0);
-  await voices.load(song.genre, audibleTracks);
   const gap = 30 / song.bpm;
-  for (const id of audibleTracks) {
-    const gain = mixTrack(ctx, bus, id);
-    gain.gain.value = mix[id].volume / 100;
-    let offset = 0;
-    for (const section of song.sections) {
-      section.tracks[id].forEach((_, step) => {
-        playStep(voices, id, section, step, .02 + (offset + step) * gap, gap, song, gain);
-      });
-      offset += section.bars * STEPS_PER_BAR;
+  const blockFrames = 12 * rate;
+  const warmupFrames = 6 * rate;
+  const mp3 = format === "mp3" ? createMp3Encoder(rate) : undefined;
+  const chunks: ArrayBuffer[] = [];
+  const stopEncoding = () => mp3?.close();
+  signal?.addEventListener("abort", stopEncoding, { once: true });
+  try {
+    signal?.throwIfAborted();
+    await mp3?.start();
+    for (let offset = 0; offset < frames; offset += blockFrames) {
+      signal?.throwIfAborted();
+      const length = Math.min(blockFrames, frames - offset);
+      // Rebuild the preceding sustain, room tail, and compressor state before each block.
+      const warmup = Math.min(offset, warmupFrames);
+      const from = (offset - warmup) / rate;
+      const to = (offset + length) / rate;
+      const ctx = new OfflineAudioContext(2, length + warmup, rate);
+      const { bus } = mixBus(ctx, song.genre);
+      bus.gain.value = master / 100;
+      const voices = new Voices(ctx);
+      await voices.load(song.genre, audibleTracks);
+      signal?.throwIfAborted();
+      for (const id of audibleTracks) {
+        const gain = mixTrack(ctx, bus, id);
+        gain.gain.value = mix[id].volume / 100;
+        let sectionOffset = 0;
+        for (const section of song.sections) {
+          section.tracks[id].forEach((note, step) => {
+            const time = .02 + (sectionOffset + step) * gap;
+            if (note && time >= from && time < to) playStep(voices, id, section, step, time - from, gap, song, gain);
+          });
+          sectionOffset += section.bars * STEPS_PER_BAR;
+        }
+      }
+      const rendered = await ctx.startRendering();
+      signal?.throwIfAborted();
+      const left = rendered.getChannelData(0).subarray(warmup);
+      const right = rendered.getChannelData(1).subarray(warmup);
+      if (mp3) await mp3.write(left.slice(), right.slice());
+      else chunks.push(wavChunk(left, right));
+      onProgress?.(Math.round((offset + length) / frames * 100));
     }
+    return mp3 ? await mp3.finish() : wavFile(chunks, rate, frames);
+  } finally {
+    signal?.removeEventListener("abort", stopEncoding);
+    mp3?.close();
   }
-  const rendered = await ctx.startRendering();
-  const left = rendered.getChannelData(0);
-  const right = rendered.getChannelData(1);
-  return format === "mp3" ? encodeMp3(left, right, rate) : encodeWav(left, right, rate);
 }

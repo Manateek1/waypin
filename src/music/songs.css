@@ -2,6 +2,8 @@
 .song-top h1 { font-size: clamp(2.2rem, 5.1vw, 4.25rem); line-height: .93; letter-spacing: -.065em; font-weight: 920; }
 .song-top p { margin-top: .55rem; color: var(--toy-muted); }
 .song-exports { display: flex; flex-wrap: wrap; gap: .5rem; }
+.song-drafts { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-weight: 700; font-size: .85rem; margin: .45rem 0; }
+.song-drafts select { max-width: 100%; padding: .4rem .6rem; border: 1px solid #b992b3; border-radius: .55rem; background: #fff8fc; color: inherit; }
 .song-prompt-header { margin-bottom: .55rem; }
 .song-prompt-header label { display: inline-flex; align-items: center; gap: .42rem; }
 .song-modes { display: flex; gap: .2rem; padding: .19rem; background: #efd5e8; border-radius: 9px; }
